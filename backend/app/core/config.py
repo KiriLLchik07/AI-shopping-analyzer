@@ -4,7 +4,6 @@ from pathlib import Path
 import os
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
-print(BACKEND_ROOT)
 
 load_dotenv(BACKEND_ROOT / ".env.backend")
 
