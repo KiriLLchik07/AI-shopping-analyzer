@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from uuid import UUID
 
 from backend.app.models.user import User
-from backend.app.schemas.request import UserRegisterRequest, UserLoginRequest
+from backend.app.schemas.request import UserRegisterRequest
 
 class UserRepository:
     def __init__(self, db_session: Session) -> None:
@@ -25,3 +26,6 @@ class UserRepository:
         self.db_session.add(user)
         self.db_session.flush()
         return user
+
+    def get_user_by_id(self, user_id: UUID) -> User | None:
+        return self.db_session.get(User, user_id)
