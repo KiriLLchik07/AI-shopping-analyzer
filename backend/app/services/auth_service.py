@@ -3,8 +3,8 @@ from fastapi import HTTPException
 
 from backend.app.schemas.request import UserRegisterRequest, UserLoginRequest
 from backend.app.repositories.user_repository import UserRepository
-from backend.app.serializer.serializer import user_to_dto
 from backend.app.models.user import User
+from backend.app.core.security import hash_password, verify_password
 
 class AuthService:
     def __init__(self, db_session: Session) -> None:
@@ -14,18 +14,19 @@ class AuthService:
     def login_user(self, payload: UserLoginRequest) -> User:
         user = self.repository.get_user_by_email(payload.user_mail)
         
-        if user is None or user.user_password != payload.user_password:
-            raise HTTPException(401, "Пользователь с такими данными не найден. Проверьте почту или пароль. Если вы еще не регистрировались, то сделайте это!")
+        if user is None or not verify_password(payload.user_password, user.user_password_hash):
+            raise HTTPException(status_code=401, detail="Неверная почта или пароль")
 
         return user
 
-    def register_user(self, payload: UserRegisterRequest) -> dict:
+    def register_user(self, payload: UserRegisterRequest) -> User:
         if_user = self.repository.get_user_by_email(payload.user_mail)
 
         if if_user:
             raise HTTPException(409, "Пользователь с такой почтой уже существует!")
-        else:
-            user = self.repository.register_user(payload)
-            self.db_session.commit()
-            return user_to_dto(user)
+        
+        hashed_password = hash_password(payload.user_password)
 
+        user = self.repository.register_user(payload, password_hash=hashed_password)
+        self.db_session.commit()
+        return user

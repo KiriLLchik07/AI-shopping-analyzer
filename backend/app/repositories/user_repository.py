@@ -15,12 +15,12 @@ class UserRepository:
         )
         return self.db_session.scalars(query).first()
 
-    def register_user(self, payload: UserRegisterRequest) -> User:
+    def register_user(self, payload: UserRegisterRequest, password_hash: str) -> User:
         user = User(
             user_name=payload.user_name,
             user_surname=payload.user_surname,
             user_mail=payload.user_mail,
-            user_password=payload.user_password
+            user_password_hash=password_hash
         )
 
         self.db_session.add(user)

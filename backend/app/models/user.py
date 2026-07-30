@@ -11,7 +11,7 @@ class User(Base):
     user_name: Mapped[str] = mapped_column(String(50), nullable=False)
     user_surname: Mapped[str] = mapped_column(String(100), nullable=False)
     user_mail: Mapped[str] = mapped_column(String(50), nullable=False, unique=True, index=True)
-    user_password: Mapped[str] = mapped_column(String(30), nullable=False)
+    user_password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     user_age: Mapped[int | None] = mapped_column(Integer)
     user_country: Mapped[str | None] = mapped_column(String(30))
     user_city: Mapped[str | None] = mapped_column(String(50))
