@@ -3,3 +3,4 @@ __pycache__
 .env.backend
 backend/test.py
 /План.md
+/.env.localhost
