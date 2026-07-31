@@ -1,6 +1,6 @@
 .vscode
 __pycache__
 .env.backend
+infra/*.env
 backend/test.py
 /План.md
-/.env.localhost
