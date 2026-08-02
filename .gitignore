@@ -1,6 +1,8 @@
 .vscode
 __pycache__
 .env.backend
-infra/*.env
+infra/postgres/*.env
+infra/minio/*.env
 backend/test.py
 /План.md
+.gitattributes
