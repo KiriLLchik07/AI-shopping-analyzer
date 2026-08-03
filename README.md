@@ -23,7 +23,7 @@ docker compose up -d --wait
 uv run --project backend uvicorn backend.app.main:app --reload
 ```
 
-Swagger будет доступен по адресу `http://127.0.0.1:8000/docs`, а консоль MinIO —
+Swagger будет доступен по адресу `http://127.0.0.1:8000/docs`, а консоль MinIO -
 по адресу `http://127.0.0.1:9001`.
 
 **Остановка инфраструктуры:**
