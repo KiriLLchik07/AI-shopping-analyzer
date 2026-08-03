@@ -1,6 +1,7 @@
 .vscode
 __pycache__
 .env.backend
+.env.docker
 infra/postgres/*.env
 infra/minio/*.env
 backend/test.py

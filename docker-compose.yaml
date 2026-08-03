@@ -56,6 +56,22 @@ services:
       - ./infra/minio/init_bucket.sh:/scripts/init-bucket.sh:ro
     entrypoint: ["/bin/sh", "/scripts/init-bucket.sh"]
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    env_file:
+      - ./backend/.env.docker
+    ports:
+      - "127.0.0.1:8000:8000"
+
 volumes:
   postgres_data:
   redis_data:
