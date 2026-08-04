@@ -104,6 +104,61 @@ def test_login_session_me_and_logout(client: TestClient) -> None:
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_me_without_cookie_returns_401(client: TestClient) -> None:
+    assert "session_id" not in client.cookies
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_me_with_deleted_redis_session_returns_401(
+    client: TestClient,
+) -> None:
+    assert register_user(client).status_code == 201
+    assert login_user(client, USER_PAYLOAD["user_password"]).status_code == 200
+
+    session_keys = list(redis_client.scan_iter("auth_session:*"))
+    assert len(session_keys) == 1
+    redis_client.delete(session_keys[0])
+
+    assert "session_id" in client.cookies
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_me_with_expired_redis_session_returns_401(
+    client: TestClient,
+) -> None:
+    assert register_user(client).status_code == 201
+    assert login_user(client, USER_PAYLOAD["user_password"]).status_code == 200
+
+    session_keys = list(redis_client.scan_iter("auth_session:*"))
+    assert len(session_keys) == 1
+    redis_client.expire(session_keys[0], 1)
+
+    deadline = time.monotonic() + 3
+    while redis_client.exists(session_keys[0]) and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+    assert redis_client.exists(session_keys[0]) == 0
+    assert "session_id" in client.cookies
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_logout_invalidates_previous_cookie(client: TestClient) -> None:
+    assert register_user(client).status_code == 201
+    assert login_user(client, USER_PAYLOAD["user_password"]).status_code == 200
+
+    previous_session_id = client.cookies.get("session_id")
+    assert previous_session_id is not None
+    assert client.post("/api/logout").status_code == 204
+
+    with TestClient(app) as client_with_old_cookie:
+        client_with_old_cookie.cookies.set(
+            "session_id",
+            previous_session_id,
+            path="/",
+        )
+        assert client_with_old_cookie.get("/api/auth/me").status_code == 401
+
+
 def test_login_with_wrong_password_does_not_create_session(
     client: TestClient,
 ) -> None:
