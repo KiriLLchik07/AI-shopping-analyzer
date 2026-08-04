@@ -1,10 +1,8 @@
 import hashlib
 import secrets
 from uuid import UUID
-from redis import Redis
 from backend.app.core.config import setting
-
-redis_client = Redis.from_url(setting.redis_url, decode_responses=True)
+from backend.app.db.redis_client import redis_client
 
 def _session_key(session_id: str) -> str:
     session_hash = hashlib.sha256(session_id.encode()).hexdigest()

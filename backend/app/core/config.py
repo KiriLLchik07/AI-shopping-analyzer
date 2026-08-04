@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     minio_root_password: str
     minio_bucket: str
     cookie_secure: bool = False
+    login_rate_limit_attempts: PositiveInt = 5
+    login_rate_limit_window_seconds: PositiveInt = 900
 
     model_config = SettingsConfigDict(
         env_file=BACKEND_ROOT / ".env.backend",

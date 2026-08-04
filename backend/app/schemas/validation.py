@@ -9,7 +9,8 @@ def normalize_email(value: object) -> object:
 
 def validate_registration_password(password: str):
     if password.isspace():
-        raise ValueError("Пароль не может быть пустым")
+        raise ValueError("Пароль не может быть пустым!")
+    return password
 
 NormalizedEmail = Annotated[
     EmailStr,

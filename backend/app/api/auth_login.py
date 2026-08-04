@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Response, Cookie
+from fastapi import APIRouter, Depends, Response, Cookie, Request, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Annotated
 
@@ -10,12 +10,39 @@ from backend.app.services.session_service import create_session, delete_session
 from backend.app.core.config import setting
 from backend.app.models.user import User
 from backend.app.api.dependencies.auth import get_current_user
+from backend.app.services.login_rate_limit_service import get_retry_after, record_failure, reset_failures
 
 router = APIRouter()
 
 @router.post("/api/auth_login")
-def auth_login(payload: UserLoginRequest, response: Response, db_session: Session = Depends(get_db)) -> UserResponse:
-    user = AuthService(db_session).login_user(payload)
+def auth_login(payload: UserLoginRequest, request: Request, response: Response, db_session: Session = Depends(get_db)) -> UserResponse:
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = get_retry_after(payload.user_mail, client_ip)
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Слишком много попыток входа!",
+            headers={"Retry-After": str(retry_after)}
+        )
+    try:
+        user = AuthService(db_session).login_user(payload)
+    except HTTPException as error:
+        if error.status_code == status.HTTP_401_UNAUTHORIZED:
+            attempts = record_failure(payload.user_mail, client_ip)
+            if attempts >= setting.login_rate_limit_attempts:
+                retry_after = (
+                    get_retry_after(payload.user_mail, client_ip)
+                    or setting.login_rate_limit_window_seconds
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Слишком много попыток входа!",
+                    headers={"Retry-After": str(retry_after)}
+                ) from error
+        raise
+
+    reset_failures(payload.user_mail, client_ip) 
+       
     session_id = create_session(user.user_id)
 
     response.set_cookie(
