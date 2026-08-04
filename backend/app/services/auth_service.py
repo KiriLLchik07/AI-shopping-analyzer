@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
-from backend.app.schemas.request import UserRegisterRequest, UserLoginRequest
+from backend.app.schemas.request import UserRegisterRequest, UserLoginRequest, ChangePasswordRequest
 from backend.app.repositories.user_repository import UserRepository
 from backend.app.models.user import User
 from backend.app.core.security import hash_password, verify_password
@@ -30,3 +30,19 @@ class AuthService:
         user = self.repository.register_user(payload, password_hash=hashed_password)
         self.db_session.commit()
         return user
+
+    def change_password(self, user: User, payload: ChangePasswordRequest) -> None:
+        if not verify_password(payload.current_password, user.user_password_hash):
+            raise HTTPException(
+                status_code=400,
+                detail="Неверный текущий пароль!"
+            )
+        if verify_password(payload.new_password, user.user_password_hash):
+            raise HTTPException(
+                status_code=400,
+                detail="Новый пароль должен отличаться от текущего!"
+            )
+
+        user.user_password_hash = hash_password(payload.new_password)
+        self.db_session.flush()
+        self.db_session.commit()

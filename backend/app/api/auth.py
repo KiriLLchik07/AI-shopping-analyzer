@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Annotated
 
 from backend.app.db.session import get_db
-from backend.app.schemas.request import UserLoginRequest, UserRegisterRequest
+from backend.app.schemas.request import UserLoginRequest, UserRegisterRequest, ChangePasswordRequest
 from backend.app.schemas.response import UserResponse
 from backend.app.services.auth_service import AuthService
 from backend.app.services.session_service import create_session, delete_session
@@ -72,3 +72,13 @@ def logout(response: Response, session_id: Annotated[str | None, Cookie()] = Non
 @router.get("/api/auth/me")
 def get_me(user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse.model_validate(user)
+
+@router.put("/api/auth/password`")
+def change_password(
+    payload: ChangePasswordRequest, 
+    response: Response, 
+    user: User = Depends(get_current_user),
+    db_session: Session = Depends(get_db)
+) -> None:
+    AuthService(db_session).change_password(user, payload)
+    response.delete_cookie(key="session_id", path="/")

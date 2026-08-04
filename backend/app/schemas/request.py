@@ -11,3 +11,6 @@ class UserRegisterRequest(BaseModel):
     user_mail: NormalizedEmail
     user_password: RegistrationPassword
 
+class ChangePasswordRequest(BaseModel):
+    current_password: LoginPassword
+    new_password: RegistrationPassword
