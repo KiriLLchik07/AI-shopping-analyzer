@@ -5,6 +5,7 @@ from backend.app.schemas.request import UserRegisterRequest, UserLoginRequest, C
 from backend.app.repositories.user_repository import UserRepository
 from backend.app.models.user import User
 from backend.app.core.security import hash_password, verify_password
+from backend.app.services.session_service import delete_all_user_sessions
 
 class AuthService:
     def __init__(self, db_session: Session) -> None:
@@ -45,4 +46,5 @@ class AuthService:
 
         user.user_password_hash = hash_password(payload.new_password)
         self.db_session.flush()
+        delete_all_user_sessions(user.user_id)
         self.db_session.commit()

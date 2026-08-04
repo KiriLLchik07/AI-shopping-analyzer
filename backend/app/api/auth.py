@@ -73,7 +73,7 @@ def logout(response: Response, session_id: Annotated[str | None, Cookie()] = Non
 def get_me(user: User = Depends(get_current_user)) -> UserResponse:
     return UserResponse.model_validate(user)
 
-@router.put("/api/auth/password`")
+@router.put("/api/auth/password", status_code=204)
 def change_password(
     payload: ChangePasswordRequest, 
     response: Response, 
