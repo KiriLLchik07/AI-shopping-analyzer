@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict
 from uuid import UUID
 from typing import Literal
+from datetime import datetime
 
 class UserResponse(BaseModel):
     user_id: UUID
@@ -10,6 +11,8 @@ class UserResponse(BaseModel):
     user_age: int | None
     user_country: str | None
     user_city: str | None
+    created_at: datetime
+    updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
 # Health сервис

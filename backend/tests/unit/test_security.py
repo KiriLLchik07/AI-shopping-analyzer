@@ -1,7 +1,7 @@
 from uuid import uuid4
-
 import pytest
 from fastapi import HTTPException
+from datetime import UTC, datetime
 
 from backend.app.core.security import hash_password, verify_password
 from backend.app.models.user import User
@@ -46,12 +46,16 @@ class FakeUserRepository:
 
 
 def make_user(password: str = PLAIN_PASSWORD) -> User:
+    now = datetime.now(UTC)
+
     return User(
         user_id=uuid4(),
         user_name="Test",
         user_surname="User",
         user_mail="test@example.com",
         user_password_hash=hash_password(password),
+        created_at=now,
+        updated_at=now,
     )
 
 
