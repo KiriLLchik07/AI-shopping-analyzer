@@ -43,7 +43,7 @@ def clean_storage() -> Generator[None, None, None]:
     redis_client.flushdb()
 
     with engine.begin() as connection:
-        connection.execute(text("TRUNCATE TABLE users CASCADE"))
+        connection.execute(text("TRUNCATE TABLE users, categories CASCADE"))
 
     yield
 
