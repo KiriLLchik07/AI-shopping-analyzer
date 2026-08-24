@@ -29,4 +29,9 @@ class User(Base):
         CheckConstraint("user_age >= 14", name="user_age_validation"),
     )
 
-    receipts: Mapped[list["Receipt"]] = relationship("Receipt", back_populates="user")
+    receipts: Mapped[list["Receipt"]] = relationship(
+        "Receipt", 
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )

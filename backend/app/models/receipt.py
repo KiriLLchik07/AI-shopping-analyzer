@@ -20,7 +20,7 @@ class Receipt(Base):
     __tablename__ = "receipts" 
 
     receipt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    receipt_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.user_id"), nullable=False)
+    receipt_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     store_name: Mapped[str | None] = mapped_column(String(100), index=True)
     store_inn: Mapped[str | None] = mapped_column(String(12))
     purchase_datetime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -45,7 +45,11 @@ class Receipt(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
     user: Mapped["User"] = relationship("User", back_populates="receipts")
-    items: Mapped[list["ReceiptItem"]] = relationship(back_populates="receipt")
+    items: Mapped[list["ReceiptItem"]] = relationship(
+        back_populates="receipt",
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
 
     __table_args__ = (
         Index("ix_receipts_user_datetime", "receipt_user_id", "purchase_datetime"),
@@ -57,18 +61,18 @@ class ReceiptItem(Base):
     __tablename__ = "receipt_items" 
 
     receipt_item_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    receipt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("receipts.receipt_id"), nullable=False, index=True)
+    receipt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("receipts.receipt_id", ondelete="CASCADE"), nullable=False, index=True)
     raw_name: Mapped[str] = mapped_column(String(256), nullable=False)
     normalized_name: Mapped[str | None] = mapped_column(String(256))
-    category_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("categories.category_id"), index=True)
+    category_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("categories.category_id", ondelete="SET NULL"), index=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit: Mapped[str | None] = mapped_column(String(100))
     weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     total_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"), server_default="0")
     confidence: Mapped[float | None] = mapped_column(Float)
-    is_impulse_candidate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_impulse_candidate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
 
@@ -114,4 +118,5 @@ class Category(Base):
 
     receipt_items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="category",
+        passive_deletes=True
     )
