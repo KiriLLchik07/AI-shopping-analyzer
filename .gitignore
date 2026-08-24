@@ -7,3 +7,4 @@ infra/minio/*.env
 backend/test.py
 /План.md
 .gitattributes
+*.stackdump
