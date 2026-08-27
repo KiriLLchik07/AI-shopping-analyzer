@@ -1,8 +1,9 @@
 from typing import Annotated
 
-from fastapi import Cookie, Depends, HTTPException
+from fastapi import Cookie, Depends
 from sqlalchemy.orm import Session
 
+from backend.app.core.exceptions import InvalidSessionError, SessionRequiredError
 from backend.app.db.session import get_db
 from backend.app.models.user import User
 from backend.app.repositories.user_repository import UserRepository
@@ -15,12 +16,12 @@ def get_current_user(
 ) -> User:
 
     if session_id is None:
-        raise HTTPException(status_code=401, detail="Необходим вход")
+        raise SessionRequiredError
 
     user_id = get_session_user_id(session_id)
     user = UserRepository(db_session).get_user_by_id(user_id) if user_id else None
 
     if user is None:
-        raise HTTPException(status_code=401, detail="Сессия недействительна")
+        raise InvalidSessionError
 
     return user

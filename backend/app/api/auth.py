@@ -1,10 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Cookie, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.core.config import setting
+from backend.app.core.exceptions import (
+    InvalidCredentialsError,
+    TooManyLoginAttemptsError,
+)
 from backend.app.db.session import get_db
 from backend.app.models.user import User
 from backend.app.schemas.request import (
@@ -34,26 +38,17 @@ def auth_login(
     client_ip = request.client.host if request.client else "unknown"
     retry_after = get_retry_after(payload.user_mail, client_ip)
     if retry_after is not None:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Слишком много попыток входа!",
-            headers={"Retry-After": str(retry_after)},
-        )
+        raise TooManyLoginAttemptsError(retry_after)
     try:
         user = AuthService(db_session).login_user(payload)
-    except HTTPException as error:
-        if error.status_code == status.HTTP_401_UNAUTHORIZED:
-            attempts = record_failure(payload.user_mail, client_ip)
-            if attempts >= setting.login_rate_limit_attempts:
-                retry_after = (
-                    get_retry_after(payload.user_mail, client_ip)
-                    or setting.login_rate_limit_window_seconds
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Слишком много попыток входа!",
-                    headers={"Retry-After": str(retry_after)},
-                ) from error
+    except InvalidCredentialsError as error:
+        attempts = record_failure(payload.user_mail, client_ip)
+        if attempts >= setting.login_rate_limit_attempts:
+            retry_after = (
+                get_retry_after(payload.user_mail, client_ip)
+                or setting.login_rate_limit_window_seconds
+            )
+            raise TooManyLoginAttemptsError(retry_after) from error
         raise
 
     reset_failures(payload.user_mail, client_ip)

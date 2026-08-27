@@ -6,6 +6,7 @@ from backend.app.core.exceptions import (
     BusinessRuleError,
     ConflictError,
     NotFoundError,
+    TooManyRequestsError,
 )
 
 
@@ -49,8 +50,20 @@ def business_rule_handler(
     )
 
 
+def too_many_requests_handler(
+    _request: Request,
+    error: TooManyRequestsError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": error.detail},
+        headers={"Retry-After": str(error.retry_after)},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(NotFoundError, not_found_handler)
     app.add_exception_handler(AuthenticationError, authentication_handler)
     app.add_exception_handler(ConflictError, conflict_handler)
     app.add_exception_handler(BusinessRuleError, business_rule_handler)
+    app.add_exception_handler(TooManyRequestsError, too_many_requests_handler)
