@@ -72,3 +72,17 @@ class ReceiptService:
         self.db_session.refresh(receipt)
 
         return receipt
+
+    def delete_receipt(
+        self,
+        receipt_id: UUID,
+        user_id: UUID,
+    ) -> None:
+
+        receipt = self.get_receipt_by_id(
+            receipt_id=receipt_id,
+            user_id=user_id,
+        )
+
+        self.repository.delete_receipt(receipt)
+        self.db_session.commit()

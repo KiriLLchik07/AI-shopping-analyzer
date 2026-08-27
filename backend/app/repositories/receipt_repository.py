@@ -91,3 +91,7 @@ class ReceiptRepository:
 
         self.db_session.flush()
         return receipt
+
+    def delete_receipt(self, receipt: Receipt) -> None:
+        self.db_session.delete(receipt)
+        self.db_session.flush()
