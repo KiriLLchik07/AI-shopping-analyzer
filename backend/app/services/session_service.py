@@ -1,6 +1,7 @@
 import hashlib
 import secrets
 from uuid import UUID
+
 from backend.app.core.config import setting
 from backend.app.db.redis_client import redis_client
 

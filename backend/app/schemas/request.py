@@ -1,13 +1,14 @@
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 from datetime import date
 from typing import Self
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.validation import (
+    LoginPassword,
     NormalizedEmail,
     RegistrationPassword,
-    LoginPassword,
 )
-from backend.app.models.enums import ReceiptStatus
 
 
 class UserLoginRequest(BaseModel):

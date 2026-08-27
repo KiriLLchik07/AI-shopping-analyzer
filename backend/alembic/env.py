@@ -1,11 +1,10 @@
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 from backend.app.core.config import setting
 from backend.app.db.base import Base
-import backend.app.models
 
 config = context.config
 config.set_main_option("sqlalchemy.url", setting.database_url)

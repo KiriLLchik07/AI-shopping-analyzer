@@ -11,7 +11,6 @@ from backend.app.db.session import SessionLocal, engine
 from backend.app.main import app
 from backend.app.services.session_service import redis_client
 
-
 RUN_INTEGRATION_TESTS = os.getenv("RUN_INTEGRATION_TESTS") == "1"
 
 

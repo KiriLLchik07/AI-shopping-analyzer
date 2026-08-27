@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+
 from backend.app.api.auth import router as auth_router
 from backend.app.api.health import router as health_router
 from backend.app.api.receipts import router as receipts_router

@@ -1,24 +1,25 @@
-from fastapi import APIRouter, Depends, Response, Cookie, Request, HTTPException, status
-from sqlalchemy.orm import Session
 from typing import Annotated
 
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from sqlalchemy.orm import Session
+
+from backend.app.api.dependencies.auth import get_current_user
+from backend.app.core.config import setting
 from backend.app.db.session import get_db
+from backend.app.models.user import User
 from backend.app.schemas.request import (
+    ChangePasswordRequest,
     UserLoginRequest,
     UserRegisterRequest,
-    ChangePasswordRequest,
 )
 from backend.app.schemas.response import UserResponse
 from backend.app.services.auth_service import AuthService
-from backend.app.services.session_service import create_session, delete_session
-from backend.app.core.config import setting
-from backend.app.models.user import User
-from backend.app.api.dependencies.auth import get_current_user
 from backend.app.services.login_rate_limit_service import (
     get_retry_after,
     record_failure,
     reset_failures,
 )
+from backend.app.services.session_service import create_session, delete_session
 
 router = APIRouter()
 

@@ -1,27 +1,27 @@
-from sqlalchemy import (
-    Uuid,
-    String,
-    Integer,
-    DateTime,
-    Index,
-    func,
-    ForeignKey,
-    Numeric,
-    Text,
-    Boolean,
-    CheckConstraint,
-    Float,
-    Enum,
-)
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import UUID, uuid4
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Uuid,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.db.base import Base
 from backend.app.models.enums import ReceiptStatus
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from backend.app.models.user import User

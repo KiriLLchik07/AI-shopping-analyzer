@@ -1,10 +1,11 @@
-from fastapi import APIRouter, status, Response
-from backend.app.services.health_service import HealthService
+from fastapi import APIRouter, Response, status
+
 from backend.app.schemas.response import (
     HealthLiveResponse,
     HealthReadyResponse,
     HealthServicesResponse,
 )
+from backend.app.services.health_service import HealthService
 
 router = APIRouter()
 

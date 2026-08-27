@@ -1,8 +1,9 @@
-from pydantic import BaseModel, ConfigDict
-from uuid import UUID
-from typing import Literal
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict
 
 from backend.app.models.enums import ReceiptStatus
 

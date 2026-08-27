@@ -1,11 +1,11 @@
-from sqlalchemy import Uuid, String, Integer, CheckConstraint, DateTime, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import UUID, uuid4
 from datetime import datetime
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+from sqlalchemy import CheckConstraint, DateTime, Integer, String, Uuid, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.db.base import Base
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from backend.app.models.receipt import Receipt

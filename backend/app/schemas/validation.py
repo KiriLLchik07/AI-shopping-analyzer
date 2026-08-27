@@ -1,5 +1,6 @@
 from typing import Annotated
-from pydantic import BeforeValidator, EmailStr, Field, AfterValidator
+
+from pydantic import AfterValidator, BeforeValidator, EmailStr, Field
 
 
 def normalize_email(value: object) -> object:

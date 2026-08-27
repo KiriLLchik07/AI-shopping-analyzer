@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from pydantic import PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

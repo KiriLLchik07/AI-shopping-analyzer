@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 from backend.app.models.receipt import Receipt
 from backend.app.models.user import User
 
-
 pytestmark = pytest.mark.integration
 
 

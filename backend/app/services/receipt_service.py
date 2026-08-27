@@ -1,5 +1,6 @@
 from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
+
 from sqlalchemy.orm import Session
 
 from backend.app.models.receipt import Receipt

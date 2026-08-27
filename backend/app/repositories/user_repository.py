@@ -1,6 +1,7 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import select
 from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from backend.app.models.user import User
 from backend.app.schemas.request import UserRegisterRequest

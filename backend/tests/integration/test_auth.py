@@ -5,12 +5,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.core.security import verify_password
 from backend.app.core.config import setting
+from backend.app.core.security import verify_password
 from backend.app.main import app
 from backend.app.models.user import User
 from backend.app.services.session_service import redis_client
-
 
 pytestmark = pytest.mark.integration
 
