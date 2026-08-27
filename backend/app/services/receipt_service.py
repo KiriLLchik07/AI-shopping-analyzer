@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from backend.app.core.exceptions import ReceiptNotFoundError
 from backend.app.models.receipt import Receipt
 from backend.app.repositories.receipt_repository import ReceiptRepository
 from backend.app.schemas.request import ReceiptListParams
@@ -49,3 +50,10 @@ class ReceiptService:
         total = self.repository.count_receipts(user_id, **filters)
 
         return receipts, total
+
+    def get_receipt_by_id(self, receipt_id: UUID, user_id: UUID) -> Receipt:
+        receipt = self.repository.get_receipt_by_id(receipt_id, user_id)
+        if receipt is None:
+            raise ReceiptNotFoundError
+
+        return receipt

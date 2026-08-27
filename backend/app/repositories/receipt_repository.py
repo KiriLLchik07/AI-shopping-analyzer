@@ -74,3 +74,10 @@ class ReceiptRepository:
         query = select(func.count()).select_from(Receipt).where(*filters)
 
         return self.db_session.scalar(query) or 0
+
+    def get_receipt_by_id(self, receipt_id: UUID, user_id: UUID) -> Receipt | None:
+        query = select(Receipt).where(
+            Receipt.receipt_id == receipt_id, Receipt.receipt_user_id == user_id
+        )
+
+        return self.db_session.scalars(query).one_or_none()

@@ -1,6 +1,7 @@
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
@@ -31,3 +32,14 @@ def get_receipts_with_pagination(
         total=total,
         total_pages=total_pages,
     )
+
+
+@router.get("/api/receipts/{receipt_id}", response_model=ReceiptResponse)
+def get_receipt_by_id(
+    receipt_id: Annotated[UUID, Path()],
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ReceiptResponse:
+
+    receipt = ReceiptService(db_session).get_receipt_by_id(receipt_id, user.user_id)
+    return ReceiptResponse.model_validate(receipt)
