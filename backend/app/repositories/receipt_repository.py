@@ -81,3 +81,13 @@ class ReceiptRepository:
         )
 
         return self.db_session.scalars(query).one_or_none()
+
+    def update_receipt(
+        self, receipt: Receipt, update_data: dict[str, object]
+    ) -> Receipt:
+
+        for field, value in update_data.items():
+            setattr(receipt, field, value)
+
+        self.db_session.flush()
+        return receipt

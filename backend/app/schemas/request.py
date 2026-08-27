@@ -1,4 +1,5 @@
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -46,5 +47,25 @@ class ReceiptListParams(BaseModel):
             and self.date_from > self.date_to
         ):
             raise ValueError("date_from must not be later then date_to")
+
+        return self
+
+
+class ReceiptUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    store_name: str | None = Field(default=None, min_length=1, max_length=100)
+    store_inn: str | None = Field(default=None, max_length=12)
+    purchase_datetime: datetime | None = None
+    total_amount: Decimal | None = Field(default=None, gt=0)
+    payment_type: str | None = Field(default=None, max_length=30)
+    fiscal_drive_number: str | None = Field(default=None, max_length=16)
+    fiscal_document_number: str | None = None
+    fiscal_sign: str | None = None
+
+    @model_validator(mode="after")
+    def validate_not_empty(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("At least one field must be provided")
 
         return self

@@ -6,11 +6,12 @@ from sqlalchemy.orm import Session
 from backend.app.core.exceptions import ReceiptNotFoundError
 from backend.app.models.receipt import Receipt
 from backend.app.repositories.receipt_repository import ReceiptRepository
-from backend.app.schemas.request import ReceiptListParams
+from backend.app.schemas.request import ReceiptListParams, ReceiptUpdateRequest
 
 
 class ReceiptService:
     def __init__(self, db_session: Session) -> None:
+        self.db_session = db_session
         self.repository = ReceiptRepository(db_session)
 
     def get_receipts(
@@ -55,5 +56,19 @@ class ReceiptService:
         receipt = self.repository.get_receipt_by_id(receipt_id, user_id)
         if receipt is None:
             raise ReceiptNotFoundError
+
+        return receipt
+
+    def update_receipt(
+        self, payload: ReceiptUpdateRequest, receipt_id: UUID, user_id: UUID
+    ) -> Receipt:
+        receipt = self.get_receipt_by_id(receipt_id, user_id)
+
+        update_data = payload.model_dump(exclude_unset=True)
+
+        receipt = self.repository.update_receipt(receipt, update_data)
+
+        self.db_session.commit()
+        self.db_session.refresh(receipt)
 
         return receipt

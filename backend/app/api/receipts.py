@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.db.session import get_db
 from backend.app.models.user import User
-from backend.app.schemas.request import ReceiptListParams
+from backend.app.schemas.request import ReceiptListParams, ReceiptUpdateRequest
 from backend.app.schemas.response import ReceiptListResponse, ReceiptResponse
 from backend.app.services.receipt_service import ReceiptService
 
@@ -42,4 +42,19 @@ def get_receipt_by_id(
 ) -> ReceiptResponse:
 
     receipt = ReceiptService(db_session).get_receipt_by_id(receipt_id, user.user_id)
+    return ReceiptResponse.model_validate(receipt)
+
+
+@router.patch("/api/receipts/{receipt_id}", response_model=ReceiptResponse)
+def update_receipt(
+    receipt_id: Annotated[UUID, Path()],
+    payload: ReceiptUpdateRequest,
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ReceiptResponse:
+
+    receipt = ReceiptService(db_session).update_receipt(
+        payload=payload, receipt_id=receipt_id, user_id=user.user_id
+    )
+
     return ReceiptResponse.model_validate(receipt)
