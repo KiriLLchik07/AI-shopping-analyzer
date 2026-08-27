@@ -11,6 +11,7 @@ from backend.app.services.receipt_service import ReceiptService
 
 router = APIRouter()
 
+
 @router.get("/api/receipts", response_model=ReceiptListResponse)
 def get_receipts_with_pagination(
     params: Annotated[ReceiptListParams, Query()],
@@ -25,10 +26,7 @@ def get_receipts_with_pagination(
     total_pages = (total + params.page_size - 1) // params.page_size
 
     return ReceiptListResponse(
-        items=[
-            ReceiptResponse.model_validate(receipt)
-            for receipt in receipts
-        ],
+        items=[ReceiptResponse.model_validate(receipt) for receipt in receipts],
         page=params.page,
         page_size=params.page_size,
         total=total,

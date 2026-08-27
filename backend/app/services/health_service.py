@@ -5,6 +5,7 @@ from sqlalchemy import text
 from backend.app.core.config import setting
 from backend.app.db.session import engine
 
+
 class HealthService:
     def __init__(self):
         self.minio_client = boto3.client(
@@ -12,17 +13,15 @@ class HealthService:
             endpoint_url=setting.minio_url,
             aws_access_key_id=setting.minio_root_user,
             aws_secret_access_key=setting.minio_root_password,
-            region_name=setting.minio_region
+            region_name=setting.minio_region,
         )
-        self.redis_client = Redis.from_url(
-            setting.redis_url
-        )
+        self.redis_client = Redis.from_url(setting.redis_url)
 
     def check_ready(self) -> dict[str, bool]:
         checks = {
             "postgresql": self._check_postgres(),
             "minio": self._check_minio(),
-            "redis": self._check_redis()
+            "redis": self._check_redis(),
         }
         return checks
 
@@ -46,4 +45,3 @@ class HealthService:
             return self.redis_client.ping()
         except Exception:
             return False
-

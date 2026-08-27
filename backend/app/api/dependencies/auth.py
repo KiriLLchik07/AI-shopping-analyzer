@@ -7,11 +7,12 @@ from backend.app.models.user import User
 from backend.app.repositories.user_repository import UserRepository
 from backend.app.services.session_service import get_session_user_id
 
+
 def get_current_user(
     session_id: Annotated[str | None, Cookie()] = None,
     db_session: Session = Depends(get_db),
 ) -> User:
-    
+
     if session_id is None:
         raise HTTPException(status_code=401, detail="Необходим вход")
 

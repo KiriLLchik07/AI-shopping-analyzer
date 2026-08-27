@@ -1,19 +1,21 @@
 """initial
 
 Revision ID: a9dd13931339
-Revises: 
+Revises:
 Create Date: 2026-07-31 18:36:28.236797
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
 
-revision: str = 'a9dd13931339'
+revision: str = "a9dd13931339"
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
 
 def upgrade() -> None:
     """Upgrade schema."""
@@ -31,17 +33,13 @@ def upgrade() -> None:
     op.create_check_constraint(
         "user_mail_validation",
         "users",
-        r"user_mail ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'"
+        r"user_mail ~ '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'",
     )
-    op.create_check_constraint(
-        "user_age_validation",
-        "users",
-        "user_age >= 14"
-    )
+    op.create_check_constraint("user_age_validation", "users", "user_age >= 14")
+
 
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_constraint("user_age_validation", "users", type_="check")
     op.drop_constraint("user_mail_validation", "users", type_="check")
     op.drop_table("users")
-

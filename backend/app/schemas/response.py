@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from backend.app.models.enums import ReceiptStatus
 
+
 class UserResponse(BaseModel):
     user_id: UUID
     user_name: str
@@ -18,19 +19,24 @@ class UserResponse(BaseModel):
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
 
+
 # Health сервис
+
 
 class HealthLiveResponse(BaseModel):
     status: Literal["ok"]
+
 
 class HealthServicesResponse(BaseModel):
     postgresql: bool
     redis: bool
     minio: bool
 
+
 class HealthReadyResponse(BaseModel):
     status: Literal["ok", "unavailable"]
     services: HealthServicesResponse
+
 
 class ReceiptResponse(BaseModel):
     receipt_id: UUID
@@ -49,6 +55,7 @@ class ReceiptResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
 
 class ReceiptListResponse(BaseModel):
     items: list[ReceiptResponse]

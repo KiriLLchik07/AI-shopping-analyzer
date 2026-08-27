@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models.receipt import Receipt
 
+
 class ReceiptRepository:
     def __init__(self, db_session: Session) -> None:
         self.db_session = db_session
