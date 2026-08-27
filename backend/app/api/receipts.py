@@ -19,9 +19,7 @@ def get_receipts_with_pagination(
     db_session: Annotated[Session, Depends(get_db)],
 ) -> ReceiptListResponse:
     receipts, total = ReceiptService(db_session).get_receipts(
-        user_id=user.user_id,
-        page=params.page,
-        page_size=params.page_size,
+        user_id=user.user_id, params=params
     )
     total_pages = (total + params.page_size - 1) // params.page_size
 
