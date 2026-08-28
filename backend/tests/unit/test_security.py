@@ -1,14 +1,14 @@
-from uuid import uuid4
-import pytest
-from fastapi import HTTPException
 from datetime import UTC, datetime
+from uuid import uuid4
 
+import pytest
+
+from backend.app.core.exceptions import InvalidCredentialsError
 from backend.app.core.security import hash_password, verify_password
 from backend.app.models.user import User
 from backend.app.schemas.request import UserLoginRequest, UserRegisterRequest
 from backend.app.schemas.response import UserResponse
 from backend.app.services.auth_service import AuthService
-
 
 PLAIN_PASSWORD = "strong-test-password"
 
@@ -107,7 +107,7 @@ def test_login_rejects_wrong_password() -> None:
     service = AuthService(FakeSession())  # type: ignore[arg-type]
     service.repository = FakeUserRepository(make_user())  # type: ignore[assignment]
 
-    with pytest.raises(HTTPException) as exception:
+    with pytest.raises(InvalidCredentialsError) as exception:
         service.login_user(
             UserLoginRequest(
                 user_mail="test@example.com",
@@ -115,7 +115,7 @@ def test_login_rejects_wrong_password() -> None:
             )
         )
 
-    assert exception.value.status_code == 401
+    assert exception.value.detail == "Invalid email or password"
 
 
 def test_user_response_does_not_expose_password_hash() -> None:

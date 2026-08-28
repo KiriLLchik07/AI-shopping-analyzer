@@ -1,5 +1,6 @@
 from enum import StrEnum
 
+
 class ReceiptStatus(StrEnum):
     UPLOADED = "uploaded"
     PREPROCESSING = "preprocessing"

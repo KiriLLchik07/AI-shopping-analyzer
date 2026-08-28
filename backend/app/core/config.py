@@ -1,8 +1,10 @@
 from pathlib import Path
+
 from pydantic import PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
     database_url: str
@@ -36,5 +38,6 @@ class Settings(BaseSettings):
         if not value.startswith(("redis://", "rediss://")):
             raise ValueError("REDIS_URL должен использовать redis:// or rediss://")
         return value
+
 
 setting = Settings()

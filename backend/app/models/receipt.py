@@ -1,26 +1,43 @@
-from sqlalchemy import (
-    Uuid, String, Integer, DateTime, Index,
-    func, ForeignKey, Numeric, Text, Boolean,
-    CheckConstraint, Float, Enum
-)
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from uuid import UUID, uuid4
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
+from uuid import UUID, uuid4
+
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    Uuid,
+    func,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.db.base import Base
 from backend.app.models.enums import ReceiptStatus
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from backend.app.models.user import User
 
-class Receipt(Base):
-    __tablename__ = "receipts" 
 
-    receipt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    receipt_user_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+class Receipt(Base):
+    __tablename__ = "receipts"
+
+    receipt_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    receipt_user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.user_id", ondelete="CASCADE"),
+        nullable=False,
+    )
     store_name: Mapped[str | None] = mapped_column(String(100), index=True)
     store_inn: Mapped[str | None] = mapped_column(String(12))
     purchase_datetime: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -40,15 +57,20 @@ class Receipt(Base):
         nullable=False,
         default=ReceiptStatus.UPLOADED,
         server_default=ReceiptStatus.UPLOADED.value,
-    )    
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="receipts")
     items: Mapped[list["ReceiptItem"]] = relationship(
-        back_populates="receipt",
-        cascade="all, delete-orphan",
-        passive_deletes=True
+        back_populates="receipt", cascade="all, delete-orphan", passive_deletes=True
     )
 
     __table_args__ = (
@@ -57,24 +79,47 @@ class Receipt(Base):
         CheckConstraint("total_amount > 0", "total_amount_check"),
     )
 
-class ReceiptItem(Base):
-    __tablename__ = "receipt_items" 
 
-    receipt_item_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
-    receipt_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), ForeignKey("receipts.receipt_id", ondelete="CASCADE"), nullable=False, index=True)
+class ReceiptItem(Base):
+    __tablename__ = "receipt_items"
+
+    receipt_item_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
+    receipt_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("receipts.receipt_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     raw_name: Mapped[str] = mapped_column(String(256), nullable=False)
     normalized_name: Mapped[str | None] = mapped_column(String(256))
-    category_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), ForeignKey("categories.category_id", ondelete="SET NULL"), index=True)
+    category_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("categories.category_id", ondelete="SET NULL"),
+        index=True,
+    )
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit: Mapped[str | None] = mapped_column(String(100))
     weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     total_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
-    discount_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=Decimal("0.00"), server_default="0")
+    discount_amount: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2), nullable=False, default=Decimal("0.00"), server_default="0"
+    )
     confidence: Mapped[float | None] = mapped_column(Float)
-    is_impulse_candidate: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    is_impulse_candidate: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     category: Mapped["Category | None"] = relationship(
         back_populates="receipt_items",
@@ -87,12 +132,17 @@ class ReceiptItem(Base):
         CheckConstraint("weight > 0", "weight_check"),
         CheckConstraint("unit_price > 0", "unit_price_check"),
         CheckConstraint("total_price > 0", "total_price_check"),
-        CheckConstraint("confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"),
+        CheckConstraint(
+            "confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"
+        ),
     )
+
 
 class Category(Base):
     __tablename__ = "categories"
-    category_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    category_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=uuid4
+    )
     category_name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
     parent_id: Mapped[UUID | None] = mapped_column(
         ForeignKey(
@@ -113,10 +163,16 @@ class Category(Base):
         back_populates="parent",
         passive_deletes=True,
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
 
     receipt_items: Mapped[list["ReceiptItem"]] = relationship(
-        back_populates="category",
-        passive_deletes=True
+        back_populates="category", passive_deletes=True
     )

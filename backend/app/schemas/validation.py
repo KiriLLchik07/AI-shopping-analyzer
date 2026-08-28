@@ -1,5 +1,7 @@
 from typing import Annotated
-from pydantic import BeforeValidator, EmailStr, Field, AfterValidator
+
+from pydantic import AfterValidator, BeforeValidator, EmailStr, Field
+
 
 def normalize_email(value: object) -> object:
     if isinstance(value, str):
@@ -7,10 +9,12 @@ def normalize_email(value: object) -> object:
 
     return value
 
+
 def validate_registration_password(password: str):
     if password.isspace():
         raise ValueError("Пароль не может быть пустым!")
     return password
+
 
 NormalizedEmail = Annotated[
     EmailStr,
@@ -20,7 +24,7 @@ NormalizedEmail = Annotated[
 RegistrationPassword = Annotated[
     str,
     Field(min_length=12, max_length=128),
-    AfterValidator(validate_registration_password)
+    AfterValidator(validate_registration_password),
 ]
 
 LoginPassword = Annotated[

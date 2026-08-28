@@ -1,12 +1,19 @@
-from fastapi import APIRouter, status, Response
+from fastapi import APIRouter, Response, status
+
+from backend.app.schemas.response import (
+    HealthLiveResponse,
+    HealthReadyResponse,
+    HealthServicesResponse,
+)
 from backend.app.services.health_service import HealthService
-from backend.app.schemas.response import HealthLiveResponse, HealthReadyResponse, HealthServicesResponse
 
 router = APIRouter()
+
 
 @router.get("/health/live", response_model=HealthLiveResponse)
 def check_live_backend() -> HealthLiveResponse:
     return HealthLiveResponse(status="ok")
+
 
 @router.get("/health/ready", response_model=HealthReadyResponse)
 def check_infra_ready(response: Response) -> HealthReadyResponse:

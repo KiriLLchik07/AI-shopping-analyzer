@@ -9,7 +9,6 @@ from backend.app.models.enums import ReceiptStatus
 from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.models.user import User
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -128,9 +127,7 @@ def test_receipt_item_and_category_relationships(
     assert saved_receipt is not None
     assert saved_category is not None
     assert saved_receipt.user.user_mail == "receipt-owner@example.com"
-    assert [saved_item.raw_name for saved_item in saved_receipt.items] == [
-        "Chips"
-    ]
+    assert [saved_item.raw_name for saved_item in saved_receipt.items] == ["Chips"]
     assert saved_receipt.items[0].category is saved_category
     assert saved_category.parent is not None
     assert saved_category.parent.category_name == "Food"
@@ -198,9 +195,7 @@ def test_deleting_categories_sets_foreign_keys_to_null(
     item_id = item.receipt_item_id
     db_session.expunge_all()
 
-    db_session.execute(
-        delete(Category).where(Category.category_id == parent_id)
-    )
+    db_session.execute(delete(Category).where(Category.category_id == parent_id))
     db_session.commit()
     db_session.expire_all()
 
@@ -208,9 +203,7 @@ def test_deleting_categories_sets_foreign_keys_to_null(
     assert saved_category is not None
     assert saved_category.parent_id is None
 
-    db_session.execute(
-        delete(Category).where(Category.category_id == category_id)
-    )
+    db_session.execute(delete(Category).where(Category.category_id == category_id))
     db_session.commit()
     db_session.expire_all()
 
@@ -255,9 +248,7 @@ def test_receipt_constraint_rejects_non_positive_total(
     db_session: Session,
     invalid_total: Decimal,
 ) -> None:
-    db_session.add(
-        make_receipt(make_user(), total_amount=invalid_total)
-    )
+    db_session.add(make_receipt(make_user(), total_amount=invalid_total))
 
     with pytest.raises(IntegrityError):
         db_session.commit()
@@ -317,9 +308,7 @@ def test_receipt_items_can_be_selected_by_receipt_id(
     db_session.commit()
 
     items = db_session.scalars(
-        select(ReceiptItem).where(
-            ReceiptItem.receipt_id == receipt.receipt_id
-        )
+        select(ReceiptItem).where(ReceiptItem.receipt_id == receipt.receipt_id)
     ).all()
 
     assert {item.raw_name for item in items} == {"First", "Second"}
