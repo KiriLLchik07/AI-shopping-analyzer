@@ -4,9 +4,13 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from backend.app.core.exceptions import ReceiptNotFoundError
-from backend.app.models.receipt import Receipt
+from backend.app.models.receipt import Receipt, ReceiptItem
 from backend.app.repositories.receipt_repository import ReceiptRepository
-from backend.app.schemas.request import ReceiptListParams, ReceiptUpdateRequest
+from backend.app.schemas.request import (
+    ReceiptItemCreateRequest,
+    ReceiptListParams,
+    ReceiptUpdateRequest,
+)
 
 
 class ReceiptService:
@@ -86,3 +90,23 @@ class ReceiptService:
 
         self.repository.delete_receipt(receipt)
         self.db_session.commit()
+
+    def create_receipt_item(
+        self,
+        payload: ReceiptItemCreateRequest,
+        receipt_id: UUID,
+        user_id: UUID,
+    ) -> ReceiptItem:
+
+        receipt = self.get_receipt_by_id(receipt_id=receipt_id, user_id=user_id)
+
+        item_data = payload.model_dump()
+
+        receipt_item = self.repository.create_receipt_item(
+            receipt_id=receipt.receipt_id, item_data=item_data
+        )
+
+        self.db_session.commit()
+        self.db_session.refresh(receipt_item)
+
+        return receipt_item

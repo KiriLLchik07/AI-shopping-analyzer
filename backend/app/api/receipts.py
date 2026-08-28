@@ -7,8 +7,16 @@ from sqlalchemy.orm import Session
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.db.session import get_db
 from backend.app.models.user import User
-from backend.app.schemas.request import ReceiptListParams, ReceiptUpdateRequest
-from backend.app.schemas.response import ReceiptListResponse, ReceiptResponse
+from backend.app.schemas.request import (
+    ReceiptItemCreateRequest,
+    ReceiptListParams,
+    ReceiptUpdateRequest,
+)
+from backend.app.schemas.response import (
+    ReceiptItemResponse,
+    ReceiptListResponse,
+    ReceiptResponse,
+)
 from backend.app.services.receipt_service import ReceiptService
 
 router = APIRouter()
@@ -71,3 +79,22 @@ def delete_receipt(
         receipt_id=receipt_id,
         user_id=user.user_id,
     )
+
+
+@router.post(
+    "/api/receipts/{receipt_id}/items",
+    status_code=201,
+    response_model=ReceiptItemResponse,
+)
+def create_receipt_item(
+    payload: ReceiptItemCreateRequest,
+    receipt_id: Annotated[UUID, Path()],
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ReceiptItemResponse:
+
+    receipt_item = ReceiptService(db_session).create_receipt_item(
+        payload=payload, receipt_id=receipt_id, user_id=user.user_id
+    )
+
+    return ReceiptItemResponse.model_validate(receipt_item)

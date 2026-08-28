@@ -72,3 +72,7 @@ class InvalidCurrentPasswordError(BusinessRuleError):
 
 class PasswordReuseError(BusinessRuleError):
     default_detail = "New password must differ from current password"
+
+
+class ReceiptItemNotFounded(NotFoundError):
+    default_detail = "Receipt item not founded"

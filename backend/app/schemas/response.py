@@ -64,3 +64,23 @@ class ReceiptListResponse(BaseModel):
     page_size: int
     total: int
     total_pages: int
+
+
+class ReceiptItemResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    receipt_item_id: UUID
+    receipt_id: UUID
+    raw_name: str
+    normalized_name: str | None
+    category_id: UUID | None
+    quantity: int
+    unit: str | None
+    weight: Decimal | None
+    unit_price: Decimal | None
+    total_price: Decimal | None
+    discount_amount: Decimal
+    confidence: float | None
+    is_impulse_candidate: bool
+    created_at: datetime
+    updated_at: datetime

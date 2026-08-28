@@ -1,6 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Self
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -69,3 +70,35 @@ class ReceiptUpdateRequest(BaseModel):
             raise ValueError("At least one field must be provided")
 
         return self
+
+
+class ReceiptItemCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw_name: str = Field(min_length=1, max_length=256)
+    normalized_name: str | None = Field(default=None, max_length=256)
+    category_id: UUID | None = None
+    quantity: int = Field(gt=0)
+    unit: str | None = Field(default=None, max_length=100)
+    weight: Decimal | None = Field(default=None, gt=0)
+    unit_price: Decimal | None = Field(default=None, gt=0)
+    total_price: Decimal | None = Field(default=None, gt=0)
+    discount_amount: Decimal = Field(default=Decimal("0.00"), ge=0)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    is_impulse_candidate: bool = False
+
+
+class ReceiptItemUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    raw_name: str | None = Field(default=None, min_length=1, max_length=256)
+    normalized_name: str | None = Field(default=None, max_length=256)
+    category_id: UUID | None = None
+    quantity: int | None = Field(default=None, gt=0)
+    unit: str | None = Field(default=None, max_length=100)
+    weight: Decimal | None = Field(default=None, gt=0)
+    unit_price: Decimal | None = Field(default=None, gt=0)
+    total_price: Decimal | None = Field(default=None, gt=0)
+    discount_amount: Decimal | None = Field(default=None, ge=0)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    is_impulse_candidate: bool | None = None

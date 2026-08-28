@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.models.enums import ReceiptStatus
-from backend.app.models.receipt import Receipt
+from backend.app.models.receipt import Receipt, ReceiptItem
 
 
 class ReceiptRepository:
@@ -95,3 +95,23 @@ class ReceiptRepository:
     def delete_receipt(self, receipt: Receipt) -> None:
         self.db_session.delete(receipt)
         self.db_session.flush()
+
+    def get_receipt_item(self, receipt_id: UUID, receipt_item_id: UUID) -> ReceiptItem:
+
+        query = select(ReceiptItem).where(
+            ReceiptItem.receipt_id == receipt_id,
+            ReceiptItem.receipt_item_id == receipt_item_id,
+        )
+
+        return self.db_session.scalars(query).one_or_none()
+
+    def create_receipt_item(
+        self, receipt_id: UUID, item_data: dict[str, object]
+    ) -> ReceiptItem:
+
+        receipt_item = ReceiptItem(receipt_id=receipt_id, **item_data)
+
+        self.db_session.add(receipt_item)
+        self.db_session.flush()
+
+        return receipt_item
