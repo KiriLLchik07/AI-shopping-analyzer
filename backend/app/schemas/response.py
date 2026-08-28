@@ -84,3 +84,7 @@ class ReceiptItemResponse(BaseModel):
     is_impulse_candidate: bool
     created_at: datetime
     updated_at: datetime
+
+
+class ReceiptDetailResponse(ReceiptResponse):
+    items: list[ReceiptItemResponse]

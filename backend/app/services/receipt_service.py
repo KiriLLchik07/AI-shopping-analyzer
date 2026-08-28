@@ -3,11 +3,12 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from backend.app.core.exceptions import ReceiptNotFoundError
+from backend.app.core.exceptions import ReceiptItemNotFoundError, ReceiptNotFoundError
 from backend.app.models.receipt import Receipt, ReceiptItem
 from backend.app.repositories.receipt_repository import ReceiptRepository
 from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
+    ReceiptItemUpdateRequest,
     ReceiptListParams,
     ReceiptUpdateRequest,
 )
@@ -110,3 +111,65 @@ class ReceiptService:
         self.db_session.refresh(receipt_item)
 
         return receipt_item
+
+    def _get_receipt_item(
+        self,
+        receipt_id: UUID,
+        receipt_item_id: UUID,
+        user_id: UUID,
+    ) -> ReceiptItem:
+
+        receipt = self.get_receipt_by_id(
+            receipt_id=receipt_id,
+            user_id=user_id,
+        )
+
+        receipt_item = self.repository.get_receipt_item(
+            receipt_id=receipt.receipt_id,
+            receipt_item_id=receipt_item_id,
+        )
+
+        if receipt_item is None:
+            raise ReceiptItemNotFoundError
+
+        return receipt_item
+
+    def update_receipt_item(
+        self,
+        payload: ReceiptItemUpdateRequest,
+        receipt_id: UUID,
+        receipt_item_id: UUID,
+        user_id: UUID,
+    ) -> ReceiptItem:
+        receipt_item = self._get_receipt_item(
+            receipt_id=receipt_id,
+            receipt_item_id=receipt_item_id,
+            user_id=user_id,
+        )
+
+        update_data = payload.model_dump(exclude_unset=True)
+
+        receipt_item = self.repository.update_receipt_item(
+            receipt_item=receipt_item,
+            update_data=update_data,
+        )
+
+        self.db_session.commit()
+        self.db_session.refresh(receipt_item)
+
+        return receipt_item
+
+    def delete_receipt_item(
+        self,
+        receipt_id: UUID,
+        receipt_item_id: UUID,
+        user_id: UUID,
+    ) -> None:
+        receipt_item = self._get_receipt_item(
+            receipt_id=receipt_id,
+            receipt_item_id=receipt_item_id,
+            user_id=user_id,
+        )
+
+        self.repository.delete_receipt_item(receipt_item)
+        self.db_session.commit()

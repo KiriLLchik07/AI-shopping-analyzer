@@ -96,15 +96,6 @@ class ReceiptRepository:
         self.db_session.delete(receipt)
         self.db_session.flush()
 
-    def get_receipt_item(self, receipt_id: UUID, receipt_item_id: UUID) -> ReceiptItem:
-
-        query = select(ReceiptItem).where(
-            ReceiptItem.receipt_id == receipt_id,
-            ReceiptItem.receipt_item_id == receipt_item_id,
-        )
-
-        return self.db_session.scalars(query).one_or_none()
-
     def create_receipt_item(
         self, receipt_id: UUID, item_data: dict[str, object]
     ) -> ReceiptItem:
@@ -115,3 +106,36 @@ class ReceiptRepository:
         self.db_session.flush()
 
         return receipt_item
+
+    def get_receipt_item(
+        self,
+        receipt_id: UUID,
+        receipt_item_id: UUID,
+    ) -> ReceiptItem | None:
+
+        query = select(ReceiptItem).where(
+            ReceiptItem.receipt_id == receipt_id,
+            ReceiptItem.receipt_item_id == receipt_item_id,
+        )
+
+        return self.db_session.scalars(query).one_or_none()
+
+    def update_receipt_item(
+        self,
+        receipt_item: ReceiptItem,
+        update_data: dict[str, object],
+    ) -> ReceiptItem:
+
+        for field, value in update_data.items():
+            setattr(receipt_item, field, value)
+
+        self.db_session.flush()
+        return receipt_item
+
+    def delete_receipt_item(
+        self,
+        receipt_item: ReceiptItem,
+    ) -> None:
+
+        self.db_session.delete(receipt_item)
+        self.db_session.flush()

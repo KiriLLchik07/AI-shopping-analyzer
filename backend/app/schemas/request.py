@@ -102,3 +102,21 @@ class ReceiptItemUpdateRequest(BaseModel):
     discount_amount: Decimal | None = Field(default=None, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_update(self) -> Self:
+        if not self.model_fields_set:
+            raise ValueError("At least one field must be provided")
+
+        non_nullable_fields = {
+            "raw_name",
+            "quantity",
+            "discount_amount",
+            "is_impulse_candidate",
+        }
+
+        for field in non_nullable_fields:
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+
+        return self

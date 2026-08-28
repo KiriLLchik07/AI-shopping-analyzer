@@ -9,10 +9,12 @@ from backend.app.db.session import get_db
 from backend.app.models.user import User
 from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
+    ReceiptItemUpdateRequest,
     ReceiptListParams,
     ReceiptUpdateRequest,
 )
 from backend.app.schemas.response import (
+    ReceiptDetailResponse,
     ReceiptItemResponse,
     ReceiptListResponse,
     ReceiptResponse,
@@ -42,7 +44,7 @@ def get_receipts_with_pagination(
     )
 
 
-@router.get("/api/receipts/{receipt_id}", response_model=ReceiptResponse)
+@router.get("/api/receipts/{receipt_id}", response_model=ReceiptDetailResponse)
 def get_receipt_by_id(
     receipt_id: Annotated[UUID, Path()],
     db_session: Annotated[Session, Depends(get_db)],
@@ -98,3 +100,43 @@ def create_receipt_item(
     )
 
     return ReceiptItemResponse.model_validate(receipt_item)
+
+
+@router.patch(
+    "/api/receipts/{receipt_id}/items/{receipt_item_id}",
+    response_model=ReceiptItemResponse,
+)
+def update_receipt_item(
+    receipt_id: Annotated[UUID, Path()],
+    receipt_item_id: Annotated[UUID, Path()],
+    payload: ReceiptItemUpdateRequest,
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ReceiptItemResponse:
+
+    receipt_item = ReceiptService(db_session).update_receipt_item(
+        payload=payload,
+        receipt_id=receipt_id,
+        receipt_item_id=receipt_item_id,
+        user_id=user.user_id,
+    )
+
+    return ReceiptItemResponse.model_validate(receipt_item)
+
+
+@router.delete(
+    "/api/receipts/{receipt_id}/items/{receipt_item_id}",
+    status_code=204,
+)
+def delete_receipt_item(
+    receipt_id: Annotated[UUID, Path()],
+    receipt_item_id: Annotated[UUID, Path()],
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> None:
+
+    ReceiptService(db_session).delete_receipt_item(
+        receipt_id=receipt_id,
+        receipt_item_id=receipt_item_id,
+        user_id=user.user_id,
+    )
