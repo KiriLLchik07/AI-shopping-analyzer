@@ -33,7 +33,7 @@ def auth_login(
     payload: UserLoginRequest,
     request: Request,
     response: Response,
-    db_session: Session = Depends(get_db),
+    db_session: Annotated[Session, Depends(get_db)],
 ) -> UserResponse:
     client_ip = request.client.host if request.client else "unknown"
     retry_after = get_retry_after(payload.user_mail, client_ip)
@@ -70,7 +70,8 @@ def auth_login(
 
 @router.post("/api/register_user", status_code=201)
 def register_user(
-    payload: UserRegisterRequest, db_session: Session = Depends(get_db)
+    payload: UserRegisterRequest,
+    db_session: Annotated[Session, Depends(get_db)],
 ) -> UserResponse:
     user = AuthService(db_session).register_user(payload)
     return UserResponse.model_validate(user)
@@ -85,7 +86,9 @@ def logout(response: Response, session_id: Annotated[str | None, Cookie()] = Non
 
 
 @router.get("/api/auth/me")
-def get_me(user: User = Depends(get_current_user)) -> UserResponse:
+def get_me(
+    user: Annotated[User, Depends(get_current_user)],
+) -> UserResponse:
     return UserResponse.model_validate(user)
 
 
@@ -93,8 +96,8 @@ def get_me(user: User = Depends(get_current_user)) -> UserResponse:
 def change_password(
     payload: ChangePasswordRequest,
     response: Response,
-    user: User = Depends(get_current_user),
-    db_session: Session = Depends(get_db),
+    user: Annotated[User, Depends(get_current_user)],
+    db_session: Annotated[Session, Depends(get_db)],
 ) -> None:
     AuthService(db_session).change_password(user, payload)
     response.delete_cookie(key="session_id", path="/")

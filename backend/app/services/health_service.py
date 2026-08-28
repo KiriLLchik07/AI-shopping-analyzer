@@ -1,6 +1,9 @@
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from redis import Redis
+from redis.exceptions import RedisError
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend.app.core.config import setting
 from backend.app.db.session import engine
@@ -30,18 +33,18 @@ class HealthService:
             with engine.connect() as connection:
                 connection.execute(text("SELECT 1"))
             return True
-        except Exception:
+        except SQLAlchemyError:
             return False
 
     def _check_minio(self) -> bool:
         try:
             self.minio_client.head_bucket(Bucket=setting.minio_bucket)
             return True
-        except Exception:
+        except (BotoCoreError, ClientError):
             return False
 
     def _check_redis(self) -> bool:
         try:
             return self.redis_client.ping()
-        except Exception:
+        except RedisError:
             return False

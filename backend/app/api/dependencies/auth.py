@@ -11,8 +11,8 @@ from backend.app.services.session_service import get_session_user_id
 
 
 def get_current_user(
+    db_session: Annotated[Session, Depends(get_db)],
     session_id: Annotated[str | None, Cookie()] = None,
-    db_session: Session = Depends(get_db),
 ) -> User:
 
     if session_id is None:
