@@ -108,7 +108,7 @@ class ReceiptService:
         receipt = self.get_receipt_by_id(receipt_id=receipt_id, user_id=user_id)
 
         self._validate_category(payload.category_id)
-        
+
         item_data = payload.model_dump()
 
         receipt_item = self.repository.create_receipt_item(
@@ -157,10 +157,7 @@ class ReceiptService:
 
         update_data = payload.model_dump(exclude_unset=True)
 
-        if (
-            "category_id" in update_data
-            and update_data["category_id"] is not None
-        ):
+        if "category_id" in update_data and update_data["category_id"] is not None:
             self._validate_category(update_data["category_id"])
 
         receipt_item = self.repository.update_receipt_item(

@@ -77,5 +77,6 @@ class PasswordReuseError(BusinessRuleError):
 class ReceiptItemNotFoundError(NotFoundError):
     default_detail = "Receipt item not found"
 
+
 class CategoryNotFoundError(NotFoundError):
     default_detail = "Category not found"

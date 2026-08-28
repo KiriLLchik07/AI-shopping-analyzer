@@ -17,10 +17,7 @@ def get_categories(
     _user: Annotated[User, Depends(get_current_user)],
     db_session: Annotated[Session, Depends(get_db)],
 ) -> list[CategoryResponse]:
-    
+
     categories = CategoryService(db_session).get_categories()
 
-    return [
-        CategoryResponse.model_validate(category)
-        for category in categories
-    ]
+    return [CategoryResponse.model_validate(category) for category in categories]

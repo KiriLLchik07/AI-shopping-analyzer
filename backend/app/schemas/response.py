@@ -89,6 +89,7 @@ class ReceiptItemResponse(BaseModel):
 class ReceiptDetailResponse(ReceiptResponse):
     items: list[ReceiptItemResponse]
 
+
 class CategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

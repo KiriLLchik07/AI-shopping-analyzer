@@ -49,10 +49,10 @@ def get_receipt_by_id(
     receipt_id: Annotated[UUID, Path()],
     db_session: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
-) -> ReceiptResponse:
+) -> ReceiptDetailResponse:
 
     receipt = ReceiptService(db_session).get_receipt_by_id(receipt_id, user.user_id)
-    return ReceiptResponse.model_validate(receipt)
+    return ReceiptDetailResponse.model_validate(receipt)
 
 
 @router.patch("/api/receipts/{receipt_id}", response_model=ReceiptResponse)

@@ -14,10 +14,10 @@ class CategoryRepository:
         self,
         category_id: UUID,
     ) -> Category | None:
-        
+
         return self.db_session.get(Category, category_id)
 
     def get_categories(self) -> list[Category]:
-        
+
         query = select(Category).order_by(Category.category_name)
         return list(self.db_session.scalars(query).all())
