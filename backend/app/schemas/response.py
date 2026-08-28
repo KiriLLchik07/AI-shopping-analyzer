@@ -88,3 +88,10 @@ class ReceiptItemResponse(BaseModel):
 
 class ReceiptDetailResponse(ReceiptResponse):
     items: list[ReceiptItemResponse]
+
+class CategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    category_id: UUID
+    category_name: str
+    parent_id: UUID | None

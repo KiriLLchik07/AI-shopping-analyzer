@@ -3,8 +3,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from backend.app.core.exceptions import ReceiptItemNotFoundError, ReceiptNotFoundError
+from backend.app.core.exceptions import (
+    CategoryNotFoundError,
+    ReceiptItemNotFoundError,
+    ReceiptNotFoundError,
+)
 from backend.app.models.receipt import Receipt, ReceiptItem
+from backend.app.repositories.category_repository import CategoryRepository
 from backend.app.repositories.receipt_repository import ReceiptRepository
 from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
@@ -18,6 +23,7 @@ class ReceiptService:
     def __init__(self, db_session: Session) -> None:
         self.db_session = db_session
         self.repository = ReceiptRepository(db_session)
+        self.category_repository = CategoryRepository(db_session)
 
     def get_receipts(
         self, user_id: UUID, params: ReceiptListParams
@@ -101,6 +107,8 @@ class ReceiptService:
 
         receipt = self.get_receipt_by_id(receipt_id=receipt_id, user_id=user_id)
 
+        self._validate_category(payload.category_id)
+        
         item_data = payload.model_dump()
 
         receipt_item = self.repository.create_receipt_item(
@@ -149,6 +157,12 @@ class ReceiptService:
 
         update_data = payload.model_dump(exclude_unset=True)
 
+        if (
+            "category_id" in update_data
+            and update_data["category_id"] is not None
+        ):
+            self._validate_category(update_data["category_id"])
+
         receipt_item = self.repository.update_receipt_item(
             receipt_item=receipt_item,
             update_data=update_data,
@@ -173,3 +187,12 @@ class ReceiptService:
 
         self.repository.delete_receipt_item(receipt_item)
         self.db_session.commit()
+
+    def _validate_category(self, category_id: UUID | None) -> None:
+        if category_id is None:
+            return
+
+        category = self.category_repository.get_category_by_id(category_id)
+
+        if category is None:
+            raise CategoryNotFoundError
