@@ -50,7 +50,7 @@ class ReceiptResponse(BaseModel):
     fiscal_drive_number: str | None
     fiscal_document_number: str | None
     fiscal_sign: str | None
-    image_url: str
+    image_object_key: str
     raw_ocr_text: str | None
     status: ReceiptStatus
     created_at: datetime

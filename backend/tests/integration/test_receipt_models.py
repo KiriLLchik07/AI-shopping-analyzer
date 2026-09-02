@@ -24,7 +24,7 @@ def make_user() -> User:
 def make_receipt(user: User, **values: object) -> Receipt:
     return Receipt(
         user=user,
-        image_url="receipts/test-receipt.webp",
+        image_object_key="receipts/test-receipt.webp",
         **values,
     )
 

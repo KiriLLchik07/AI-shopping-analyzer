@@ -46,7 +46,7 @@ class Receipt(Base):
     fiscal_drive_number: Mapped[str | None] = mapped_column(String(16))
     fiscal_document_number: Mapped[str | None] = mapped_column(String)
     fiscal_sign: Mapped[str | None] = mapped_column(String)
-    image_url: Mapped[str] = mapped_column(String(256), nullable=False)
+    image_object_key: Mapped[str] = mapped_column(String(256), nullable=False)
     raw_ocr_text: Mapped[str | None] = mapped_column(Text)
     status: Mapped[ReceiptStatus] = mapped_column(
         Enum(

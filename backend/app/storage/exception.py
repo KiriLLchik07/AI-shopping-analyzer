@@ -1,0 +1,2 @@
+class ObjectStorageError(Exception):
+    pass

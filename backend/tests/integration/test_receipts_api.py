@@ -67,7 +67,7 @@ def add_receipts(
         Receipt(
             user=user,
             store_name=store_name,
-            image_url=f"receipts/{index}.webp",
+            image_object_key=f"receipts/{index}.webp",
             created_at=created_at + timedelta(minutes=index),
         )
         for index, store_name in enumerate(store_names)
@@ -229,28 +229,28 @@ def test_receipt_filters_are_applied_together(
                 store_name="SuperMarket",
                 purchase_datetime=target_date,
                 status=ReceiptStatus.COMPLETED,
-                image_url="receipts/matching.webp",
+                image_object_key="receipts/matching.webp",
             ),
             Receipt(
                 user=user,
                 store_name="Other store",
                 purchase_datetime=target_date,
                 status=ReceiptStatus.COMPLETED,
-                image_url="receipts/wrong-store.webp",
+                image_object_key="receipts/wrong-store.webp",
             ),
             Receipt(
                 user=user,
                 store_name="SuperMarket",
                 purchase_datetime=target_date - timedelta(days=1),
                 status=ReceiptStatus.COMPLETED,
-                image_url="receipts/wrong-date.webp",
+                image_object_key="receipts/wrong-date.webp",
             ),
             Receipt(
                 user=user,
                 store_name="SuperMarket",
                 purchase_datetime=target_date,
                 status=ReceiptStatus.FAILED,
-                image_url="receipts/wrong-status.webp",
+                image_object_key="receipts/wrong-status.webp",
             ),
         ]
     )
@@ -282,7 +282,7 @@ def test_get_receipt_returns_items_without_orm_or_secret_fields(
         user=user,
         store_name="Coffee shop",
         total_amount=Decimal("25.50"),
-        image_url="receipts/coffee.webp",
+        image_object_key="receipts/coffee.webp",
     )
     receipt.items.append(
         ReceiptItem(
@@ -318,7 +318,7 @@ def test_update_receipt_changes_only_provided_fields(
         user=user,
         store_name="Old store",
         store_inn="1234567890",
-        image_url="receipts/update.webp",
+        image_object_key="receipts/update.webp",
     )
     db_session.add(receipt)
     db_session.commit()
@@ -347,7 +347,7 @@ def test_delete_receipt_cascades_to_items(
 ) -> None:
     register_and_login(client)
     user = get_registered_user(db_session)
-    receipt = Receipt(user=user, image_url="receipts/delete.webp")
+    receipt = Receipt(user=user, image_object_key="receipts/delete.webp")
     item = ReceiptItem(receipt=receipt, raw_name="Milk", quantity=1)
     db_session.add(item)
     db_session.commit()
@@ -370,7 +370,7 @@ def test_create_update_and_delete_receipt_item(
 ) -> None:
     register_and_login(client)
     user = get_registered_user(db_session)
-    receipt = Receipt(user=user, image_url="receipts/item-crud.webp")
+    receipt = Receipt(user=user, image_object_key="receipts/item-crud.webp")
     category = Category(category_name="Products")
     db_session.add_all([receipt, category])
     db_session.commit()
@@ -422,7 +422,7 @@ def test_unknown_category_is_rejected_for_item_create_and_update(
 ) -> None:
     register_and_login(client)
     user = get_registered_user(db_session)
-    receipt = Receipt(user=user, image_url="receipts/category-check.webp")
+    receipt = Receipt(user=user, image_object_key="receipts/category-check.webp")
     item = ReceiptItem(receipt=receipt, raw_name="Milk", quantity=1)
     db_session.add(item)
     db_session.commit()
@@ -459,7 +459,7 @@ def test_missing_receipt_and_item_resources_return_404(
 ) -> None:
     register_and_login(client)
     user = get_registered_user(db_session)
-    receipt = Receipt(user=user, image_url="receipts/missing-item.webp")
+    receipt = Receipt(user=user, image_object_key="receipts/missing-item.webp")
     db_session.add(receipt)
     db_session.commit()
     missing_receipt_id = uuid4()
@@ -508,7 +508,7 @@ def test_other_user_cannot_access_or_modify_receipt_resources(
 ) -> None:
     register_and_login(client)
     owner = get_registered_user(db_session)
-    receipt = Receipt(user=owner, image_url="receipts/private.webp")
+    receipt = Receipt(user=owner, image_object_key="receipts/private.webp")
     item = ReceiptItem(receipt=receipt, raw_name="Private item", quantity=1)
     db_session.add(item)
     db_session.commit()
@@ -584,7 +584,7 @@ def test_empty_patch_requests_are_rejected(
 ) -> None:
     register_and_login(client)
     user = get_registered_user(db_session)
-    receipt = Receipt(user=user, image_url="receipts/validation.webp")
+    receipt = Receipt(user=user, image_object_key="receipts/validation.webp")
     item = ReceiptItem(receipt=receipt, raw_name="Milk", quantity=1)
     db_session.add(item)
     db_session.commit()
