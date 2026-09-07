@@ -1,18 +1,18 @@
-from sqlalchemy.orm import Session
-from sqlalchemy import select
 from uuid import UUID
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 from backend.app.models.user import User
 from backend.app.schemas.request import UserRegisterRequest
+
 
 class UserRepository:
     def __init__(self, db_session: Session) -> None:
         self.db_session = db_session
 
     def get_user_by_email(self, user_mail: str) -> User | None:
-        query = (
-            select(User).where(User.user_mail == user_mail)
-        )
+        query = select(User).where(User.user_mail == user_mail)
         return self.db_session.scalars(query).first()
 
     def register_user(self, payload: UserRegisterRequest, password_hash: str) -> User:
@@ -20,7 +20,7 @@ class UserRepository:
             user_name=payload.user_name,
             user_surname=payload.user_surname,
             user_mail=payload.user_mail,
-            user_password_hash=password_hash
+            user_password_hash=password_hash,
         )
 
         self.db_session.add(user)

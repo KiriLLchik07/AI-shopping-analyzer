@@ -5,12 +5,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.app.core.security import verify_password
 from backend.app.core.config import setting
+from backend.app.core.security import verify_password
 from backend.app.main import app
 from backend.app.models.user import User
 from backend.app.services.session_service import redis_client
-
 
 pytestmark = pytest.mark.integration
 
@@ -193,11 +192,11 @@ def test_login_rate_limit_blocks_after_max_failures(
 
     failure_keys = list(redis_client.scan_iter("auth:login:failures:*"))
     assert len(failure_keys) == 1
-    assert redis_client.get(failure_keys[0]) == str(
-        setting.login_rate_limit_attempts
-    )
-    assert 0 < redis_client.ttl(failure_keys[0]) <= (
-        setting.login_rate_limit_window_seconds
+    assert redis_client.get(failure_keys[0]) == str(setting.login_rate_limit_attempts)
+    assert (
+        0
+        < redis_client.ttl(failure_keys[0])
+        <= (setting.login_rate_limit_window_seconds)
     )
 
 
@@ -285,14 +284,11 @@ def test_change_password_revokes_all_sessions(
 
     with TestClient(app) as second_client:
         assert (
-            login_user(second_client, USER_PAYLOAD["user_password"]).status_code
-            == 200
+            login_user(second_client, USER_PAYLOAD["user_password"]).status_code == 200
         )
         assert len(list(redis_client.scan_iter("auth_session:*"))) == 2
 
-        user_session_keys = list(
-            redis_client.scan_iter("auth_user_sessions:*")
-        )
+        user_session_keys = list(redis_client.scan_iter("auth_user_sessions:*"))
         assert len(user_session_keys) == 1
         assert redis_client.scard(user_session_keys[0]) == 2
 

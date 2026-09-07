@@ -27,3 +27,8 @@ pythonpath = [".."]
 markers = [
     "integration: requires isolated PostgreSQL and Redis services",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.4",
+]
