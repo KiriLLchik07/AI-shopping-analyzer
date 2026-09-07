@@ -1,16 +1,17 @@
-from botocore.exceptions import BotoCoreError, ClientError
+from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend.app.api.dependencies.storage import get_object_storage
 from backend.app.core.config import setting
 from backend.app.db.session import engine
+from backend.app.storage.interface import ObjectStorage
 
 
 class HealthService:
-    def __init__(self):
-        self.minio_client = get_object_storage()
+    def __init__(self, object_storage: ObjectStorage) -> None:
+        self.object_storage = object_storage
+        self.redis_client = Redis.from_url(setting.redis_url)
 
     def check_ready(self) -> dict[str, bool]:
         checks = {
@@ -29,11 +30,7 @@ class HealthService:
             return False
 
     def _check_minio(self) -> bool:
-        try:
-            self.minio_client.head_bucket(Bucket=setting.minio_bucket)
-            return True
-        except (BotoCoreError, ClientError):
-            return False
+        return self.object_storage.is_available()
 
     def _check_redis(self) -> bool:
         try:
