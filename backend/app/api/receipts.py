@@ -1,10 +1,11 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, File, Path, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
+from backend.app.api.dependencies.storage import get_object_storage
 from backend.app.db.session import get_db
 from backend.app.models.user import User
 from backend.app.schemas.request import (
@@ -20,6 +21,8 @@ from backend.app.schemas.response import (
     ReceiptResponse,
 )
 from backend.app.services.receipt_service import ReceiptService
+from backend.app.services.receipt_upload_service import ReceiptUploadService
+from backend.app.storage.interface import ObjectStorage
 
 router = APIRouter()
 
@@ -140,3 +143,16 @@ def delete_receipt_item(
         receipt_item_id=receipt_item_id,
         user_id=user.user_id,
     )
+
+
+@router.post("/api/receipts/upload", status_code=201, response_model=ReceiptResponse)
+def upload_receipt(
+    file: Annotated[UploadFile, File()],
+    user: Annotated[User, Depends(get_current_user)],
+    db_session: Annotated[Session, Depends(get_db)],
+    object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
+) -> ReceiptResponse:
+    service = ReceiptUploadService(db_session=db_session, object_storage=object_storage)
+    receipt = service.upload(user_id=user.user_id, file=file.file)
+
+    return ReceiptResponse.model_validate(receipt)

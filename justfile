@@ -9,3 +9,6 @@
 
 @start:
     docker compose up -d
+
+@backend:
+    uv run --project backend uvicorn backend.app.main:app --reload

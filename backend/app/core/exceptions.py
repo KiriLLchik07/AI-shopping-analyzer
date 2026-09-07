@@ -80,3 +80,15 @@ class ReceiptItemNotFoundError(NotFoundError):
 
 class CategoryNotFoundError(NotFoundError):
     default_detail = "Category not found"
+
+
+class InvalidReceiptImageError(BusinessRuleError):
+    default_detail = "Invalid receipt image"
+
+
+class UploadTooLargeError(ApplicationError):
+    default_detail = "Image must not exceed 10 MiB"
+
+
+class ReceiptUploadUnavailableError(ApplicationError):
+    default_detail = "Receipt upload is temporarily unavailable"

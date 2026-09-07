@@ -139,3 +139,18 @@ class ReceiptRepository:
 
         self.db_session.delete(receipt_item)
         self.db_session.flush()
+
+    def create_receipt(
+        self, *, receipt_id: UUID, user_id: UUID, image_object_key: str
+    ) -> Receipt:
+        receipt = Receipt(
+            receipt_id=receipt_id,
+            receipt_user_id=user_id,
+            image_object_key=image_object_key,
+            status=ReceiptStatus.UPLOADED,
+        )
+
+        self.db_session.add(receipt)
+        self.db_session.flush()
+
+        return receipt
