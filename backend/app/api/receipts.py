@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.api.dependencies.storage import get_object_storage
-from backend.app.db.session import get_db
+from backend.app.db.session import SessionLocal, get_db
 from backend.app.models.user import User
 from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
@@ -152,7 +152,11 @@ def upload_receipt(
     db_session: Annotated[Session, Depends(get_db)],
     object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
 ) -> ReceiptResponse:
-    service = ReceiptUploadService(db_session=db_session, object_storage=object_storage)
+    service = ReceiptUploadService(
+        db_session=db_session,
+        object_storage=object_storage,
+        cleanup_session_factory=SessionLocal,
+    )
     receipt = service.upload(user_id=user.user_id, file=file.file)
 
     return ReceiptResponse.model_validate(receipt)
