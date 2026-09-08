@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 
 def cleanup_one(
-    *,
     receipt_id: UUID,
     session_factory: sessionmaker[Session],
     object_storage: ObjectStorage,

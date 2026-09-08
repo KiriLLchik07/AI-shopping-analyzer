@@ -8,6 +8,7 @@ from sqlalchemy import delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.core.config import image_settings
 from backend.app.core.exceptions import (
     InvalidReceiptImageError,
     ReceiptUploadUnavailableError,
@@ -20,15 +21,6 @@ from backend.app.storage.exception import ObjectStorageError
 from backend.app.storage.interface import ObjectStorage
 
 logger = logging.getLogger(__name__)
-
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
-MAX_IMAGE_PIXELS = 20000000
-
-IMAGE_FORMATS = {
-    "JPEG": ("jpg", "image/jpeg"),
-    "PNG": ("png", "image/png"),
-    "WEBP": ("webp", "image/webp"),
-}
 
 
 class ReceiptUploadService:
@@ -45,7 +37,6 @@ class ReceiptUploadService:
 
     def upload(
         self,
-        *,
         user_id: UUID,
         file: BinaryIO,
     ) -> Receipt:
@@ -111,13 +102,15 @@ class ReceiptUploadService:
     def _read_file(file: BinaryIO) -> bytes:
         file.seek(0)
 
-        data = file.read(MAX_UPLOAD_BYTES + 1)
+        data = file.read(image_settings.max_upload_bytes + 1)
 
         if not data:
             raise InvalidReceiptImageError("Image must not be empty")
 
-        if len(data) > MAX_UPLOAD_BYTES:
-            raise UploadTooLargeError()
+        if len(data) > image_settings.max_upload_bytes:
+            raise UploadTooLargeError(
+                f"Image must not exceed {image_settings.max_upload_bytes} bytes"
+            )
 
         return data
 
@@ -127,14 +120,14 @@ class ReceiptUploadService:
             with Image.open(BytesIO(data)) as image:
                 image_format = image.format
 
-                if image_format not in IMAGE_FORMATS:
+                if image_format not in image_settings.formats:
                     raise InvalidReceiptImageError(
-                        "Only JPEG, PNG and WEBP formats are supported"
+                        "Supported image formats: " + ", ".join(image_settings.formats)
                     )
 
-                if image.width * image.height > MAX_IMAGE_PIXELS:
+                if image.width * image.height > image_settings.max_pixels:
                     raise InvalidReceiptImageError(
-                        "Image must not exceed 20 million pixels"
+                        f"Image must not exceed {image_settings.max_pixels} pixels"
                     )
 
                 if getattr(image, "n_frames", 1) != 1:
@@ -158,7 +151,7 @@ class ReceiptUploadService:
                 "File is not a valid image or is corrupted"
             ) from error
 
-        return IMAGE_FORMATS[image_format]
+        return image_settings.formats[image_format]
 
     def _rollback(self) -> None:
         try:
@@ -172,6 +165,6 @@ class ReceiptUploadService:
         except ObjectStorageError:
             logger.exception("Failed to clean up receipt image %s", object_key)
 
-    def _registry_cleanup_task(self, *, receipt_id: UUID, object_key: str) -> None:
+    def _registry_cleanup_task(self, receipt_id: UUID, object_key: str) -> None:
         with self.cleanup_session_factory.begin() as session:
             session.add(ObjectCleanupTask(receipt_id=receipt_id, object_key=object_key))

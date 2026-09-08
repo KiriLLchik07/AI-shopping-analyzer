@@ -57,7 +57,6 @@ class ReceiptRepository:
     def count_receipts(
         self,
         user_id: UUID,
-        *,
         date_from: datetime | None,
         date_to: datetime | None,
         store_name: str | None,
@@ -141,7 +140,7 @@ class ReceiptRepository:
         self.db_session.flush()
 
     def create_receipt(
-        self, *, receipt_id: UUID, user_id: UUID, image_object_key: str
+        self, receipt_id: UUID, user_id: UUID, image_object_key: str
     ) -> Receipt:
         receipt = Receipt(
             receipt_id=receipt_id,

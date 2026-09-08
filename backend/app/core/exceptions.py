@@ -87,8 +87,12 @@ class InvalidReceiptImageError(BusinessRuleError):
 
 
 class UploadTooLargeError(ApplicationError):
-    default_detail = "Image must not exceed 10 MiB"
+    default_detail = "Image exceeds the configured size limit"
 
 
 class ReceiptUploadUnavailableError(ApplicationError):
     default_detail = "Receipt upload is temporarily unavailable"
+
+
+class ReceiptImageUnavailableError(ApplicationError):
+    default_detail = "Could not generate receipt image URL"

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
 
@@ -5,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.core.exceptions import (
     CategoryNotFoundError,
+    ReceiptImageUnavailableError,
     ReceiptItemNotFoundError,
     ReceiptNotFoundError,
 )
@@ -17,6 +19,10 @@ from backend.app.schemas.request import (
     ReceiptListParams,
     ReceiptUpdateRequest,
 )
+from backend.app.storage.exception import ObjectStorageError
+from backend.app.storage.interface import ObjectStorage
+
+logger = logging.getLogger(__name__)
 
 
 class ReceiptService:
@@ -193,3 +199,24 @@ class ReceiptService:
 
         if category is None:
             raise CategoryNotFoundError
+
+    def get_image_url(
+        self,
+        receipt_id: UUID,
+        user_id: UUID,
+        object_storage: ObjectStorage,
+        expires_seconds: int,
+    ) -> str:
+
+        receipt = self.get_receipt_by_id(receipt_id=receipt_id, user_id=user_id)
+        try:
+            return object_storage.generate_download_url(
+                object_key=receipt.image_object_key,
+                expires_seconds=expires_seconds,
+            )
+        except ObjectStorageError as error:
+            logger.exception(
+                "Failed to generate image URL for receipt %s",
+                receipt_id,
+            )
+            raise ReceiptImageUnavailableError() from error
