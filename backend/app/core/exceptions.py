@@ -80,3 +80,23 @@ class ReceiptItemNotFoundError(NotFoundError):
 
 class CategoryNotFoundError(NotFoundError):
     default_detail = "Category not found"
+
+
+class InvalidReceiptImageError(BusinessRuleError):
+    default_detail = "Invalid receipt image"
+
+
+class UploadTooLargeError(ApplicationError):
+    default_detail = "Image exceeds the configured size limit"
+
+
+class ReceiptUploadUnavailableError(ApplicationError):
+    default_detail = "Receipt upload is temporarily unavailable"
+
+
+class ReceiptImageUnavailableError(ApplicationError):
+    default_detail = "Could not generate receipt image URL"
+
+
+class ReceiptDeletionUnavailableError(ApplicationError):
+    default_detail = "Receipt deletion is temporarily unavailable"

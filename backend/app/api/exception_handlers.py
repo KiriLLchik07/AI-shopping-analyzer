@@ -6,7 +6,11 @@ from backend.app.core.exceptions import (
     BusinessRuleError,
     ConflictError,
     NotFoundError,
+    ReceiptDeletionUnavailableError,
+    ReceiptImageUnavailableError,
+    ReceiptUploadUnavailableError,
     TooManyRequestsError,
+    UploadTooLargeError,
 )
 
 
@@ -61,9 +65,57 @@ def too_many_requests_handler(
     )
 
 
+def upload_too_large_handler(
+    _request: Request,
+    error: UploadTooLargeError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={"detail": error.detail},
+    )
+
+
+def receipt_upload_unavailable_handler(
+    _request: Request,
+    error: ReceiptUploadUnavailableError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": error.detail},
+    )
+
+
+def receipt_image_unavailable_handler(
+    _request: Request,
+    error: ReceiptImageUnavailableError,
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": error.detail},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def receipt_deletion_unavailable_handler(
+    _request: Request, error: ReceiptDeletionUnavailableError
+) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": error.detail})
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(
+        ReceiptDeletionUnavailableError, receipt_deletion_unavailable_handler
+    )
     app.add_exception_handler(NotFoundError, not_found_handler)
     app.add_exception_handler(AuthenticationError, authentication_handler)
     app.add_exception_handler(ConflictError, conflict_handler)
     app.add_exception_handler(BusinessRuleError, business_rule_handler)
     app.add_exception_handler(TooManyRequestsError, too_many_requests_handler)
+    app.add_exception_handler(UploadTooLargeError, upload_too_large_handler)
+    app.add_exception_handler(
+        ReceiptUploadUnavailableError, receipt_upload_unavailable_handler
+    )
+    app.add_exception_handler(
+        ReceiptImageUnavailableError,
+        receipt_image_unavailable_handler,
+    )
