@@ -2,14 +2,17 @@ import logging
 from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.core.exceptions import (
     CategoryNotFoundError,
+    ReceiptDeletionUnavailableError,
     ReceiptImageUnavailableError,
     ReceiptItemNotFoundError,
     ReceiptNotFoundError,
 )
+from backend.app.models.object_cleanup_task import ObjectCleanupTask
 from backend.app.models.receipt import Receipt, ReceiptItem
 from backend.app.repositories.category_repository import CategoryRepository
 from backend.app.repositories.receipt_repository import ReceiptRepository
@@ -19,6 +22,7 @@ from backend.app.schemas.request import (
     ReceiptListParams,
     ReceiptUpdateRequest,
 )
+from backend.app.services.object_cleanup_service import cleanup_one
 from backend.app.storage.exception import ObjectStorageError
 from backend.app.storage.interface import ObjectStorage
 
@@ -94,15 +98,41 @@ class ReceiptService:
         self,
         receipt_id: UUID,
         user_id: UUID,
+        object_storage: ObjectStorage,
+        cleanup_session_factory: sessionmaker[Session],
     ) -> None:
+        try:
+            receipt = self.repository.get_receipt_by_id(
+                receipt_id, user_id, for_update=True
+            )
+            if receipt is None:
+                raise ReceiptNotFoundError()
 
-        receipt = self.get_receipt_by_id(
-            receipt_id=receipt_id,
-            user_id=user_id,
-        )
+            task = self.db_session.get(ObjectCleanupTask, receipt_id)
+            if task is None:
+                self.db_session.add(
+                    ObjectCleanupTask(
+                        receipt_id=receipt_id,
+                        object_key=receipt.image_object_key,
+                    )
+                )
 
-        self.repository.delete_receipt(receipt)
-        self.db_session.commit()
+            self.repository.delete_receipt(receipt)
+            self.db_session.commit()
+        except SQLAlchemyError as error:
+            try:
+                self.db_session.rollback()
+            except SQLAlchemyError:
+                logger.exception("Failed to roll back receipt deletion")
+            logger.exception("Failed to commit deletion of receipt %s", receipt_id)
+            raise ReceiptDeletionUnavailableError() from error
+
+        try:
+            cleanup_one(receipt_id, cleanup_session_factory, object_storage)
+        except (SQLAlchemyError, ObjectStorageError):
+            logger.exception(
+                "Receipt %s deleted; image cleanup needs retry", receipt_id
+            )
 
     def create_receipt_item(
         self,

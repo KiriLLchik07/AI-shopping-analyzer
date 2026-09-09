@@ -6,6 +6,7 @@ from backend.app.core.exceptions import (
     BusinessRuleError,
     ConflictError,
     NotFoundError,
+    ReceiptDeletionUnavailableError,
     ReceiptImageUnavailableError,
     ReceiptUploadUnavailableError,
     TooManyRequestsError,
@@ -95,7 +96,16 @@ def receipt_image_unavailable_handler(
     )
 
 
+def receipt_deletion_unavailable_handler(
+    _request: Request, error: ReceiptDeletionUnavailableError
+) -> JSONResponse:
+    return JSONResponse(status_code=503, content={"detail": error.detail})
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(
+        ReceiptDeletionUnavailableError, receipt_deletion_unavailable_handler
+    )
     app.add_exception_handler(NotFoundError, not_found_handler)
     app.add_exception_handler(AuthenticationError, authentication_handler)
     app.add_exception_handler(ConflictError, conflict_handler)

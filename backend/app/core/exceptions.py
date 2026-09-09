@@ -96,3 +96,7 @@ class ReceiptUploadUnavailableError(ApplicationError):
 
 class ReceiptImageUnavailableError(ApplicationError):
     default_detail = "Could not generate receipt image URL"
+
+
+class ReceiptDeletionUnavailableError(ApplicationError):
+    default_detail = "Receipt deletion is temporarily unavailable"

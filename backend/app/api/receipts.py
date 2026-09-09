@@ -80,11 +80,14 @@ def delete_receipt(
     receipt_id: Annotated[UUID, Path()],
     db_session: Annotated[Session, Depends(get_db)],
     user: Annotated[User, Depends(get_current_user)],
+    object_storage: Annotated[ObjectStorage, Depends(get_object_storage)],
 ) -> None:
 
     ReceiptService(db_session).delete_receipt(
         receipt_id=receipt_id,
         user_id=user.user_id,
+        object_storage=object_storage,
+        cleanup_session_factory=SessionLocal,
     )
 
 
