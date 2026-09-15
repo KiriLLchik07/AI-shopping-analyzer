@@ -1,9 +1,29 @@
 from pathlib import Path
 
-from pydantic import PositiveInt, field_validator
+from pydantic import Field, PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
+
+
+class ImageSettings(BaseSettings):
+    url_ttl_seconds: int = Field(default=300, ge=1, le=900)
+    max_upload_bytes: PositiveInt = 10 * 1024 * 1024
+    max_pixels: PositiveInt = 20_000_000
+    formats: dict[str, tuple[str, str]] = Field(
+        default_factory=lambda: {
+            "JPEG": ("jpg", "image/jpeg"),
+            "PNG": ("png", "image/png"),
+            "WEBP": ("webp", "image/webp"),
+        }
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="IMAGE_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class Settings(BaseSettings):
@@ -15,6 +35,7 @@ class Settings(BaseSettings):
     minio_root_user: str
     minio_root_password: str
     minio_bucket: str
+    minio_public_url: str = "http://127.0.0.1:9000"
     cookie_secure: bool = False
     login_rate_limit_attempts: PositiveInt = 5
     login_rate_limit_window_seconds: PositiveInt = 900
@@ -41,3 +62,4 @@ class Settings(BaseSettings):
 
 
 setting = Settings()
+image_settings = ImageSettings()

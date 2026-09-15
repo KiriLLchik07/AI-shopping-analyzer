@@ -8,3 +8,12 @@ backend/test.py
 /План.md
 .gitattributes
 *.stackdump
+
+# Локальные материалы teach
+/assets/
+/lessons/
+/reference/
+/learning-records/
+/MISSION.md
+/NOTES.md
+/RESOURCES.md

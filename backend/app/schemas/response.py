@@ -96,3 +96,8 @@ class CategoryResponse(BaseModel):
     category_id: UUID
     category_name: str
     parent_id: UUID | None
+
+
+class ReceiptImageUrlResponse(BaseModel):
+    image_url: str
+    expires_in: int
