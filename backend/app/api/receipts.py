@@ -1,8 +1,10 @@
 from typing import Annotated
 from uuid import UUID
+import logging
 
-from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile, HTTPException
 from sqlalchemy.orm import Session
+from redis.exceptions import RedisError
 
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.api.dependencies.storage import get_object_storage
@@ -25,9 +27,11 @@ from backend.app.schemas.response import (
 from backend.app.services.receipt_service import ReceiptService
 from backend.app.services.receipt_upload_service import ReceiptUploadService
 from backend.app.storage.interface import ObjectStorage
+from backend.app.workers.queue import enqueue_receipt
 
 router = APIRouter()
 
+logger = logging.getLogger(__name__)
 
 @router.get("/api/receipts", response_model=ReceiptListResponse)
 def get_receipts_with_pagination(
@@ -163,6 +167,25 @@ def upload_receipt(
         cleanup_session_factory=SessionLocal,
     )
     receipt = service.upload(user_id=user.user_id, file=file.file)
+    try:
+        enqueue_receipt(receipt.receipt_id)
+    except RedisError as error:
+        logger.exception(
+            "Could not confirm receipt enqueue receipt_id=%s",
+            receipt.receipt_id,
+        )
+
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "receipt_enqueue_unconfirmed",
+                "message": (
+                    "Чек сохранён, но не удалось подтвердить постановку "
+                    "в очередь обработки. Не загружайте изображение повторно."
+                ),
+                "receipt_id": str(receipt.receipt_id),
+            },
+        ) from error
 
     return ReceiptResponse.model_validate(receipt)
 
