@@ -1,10 +1,19 @@
+import logging
 from typing import Annotated
 from uuid import UUID
-import logging
 
-from fastapi import APIRouter, Depends, File, Path, Query, Response, UploadFile, HTTPException
-from sqlalchemy.orm import Session
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    UploadFile,
+)
 from redis.exceptions import RedisError
+from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.api.dependencies.storage import get_object_storage
@@ -32,6 +41,7 @@ from backend.app.workers.queue import enqueue_receipt
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
 
 @router.get("/api/receipts", response_model=ReceiptListResponse)
 def get_receipts_with_pagination(

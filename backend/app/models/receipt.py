@@ -68,6 +68,10 @@ class Receipt(Base):
         onupdate=func.now(),
     )
 
+    processing_result_saved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
     user: Mapped["User"] = relationship("User", back_populates="receipts")
     items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", passive_deletes=True

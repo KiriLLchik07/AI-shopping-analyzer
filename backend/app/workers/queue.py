@@ -19,6 +19,7 @@ receipt_queue = Queue(
     default_timeout=300,
 )
 
+
 def enqueue_receipt(receipt_id: UUID) -> str:
     job = receipt_queue.enqueue(
         "backend.app.workers.jobs.process_receipt",
@@ -26,5 +27,7 @@ def enqueue_receipt(receipt_id: UUID) -> str:
     )
 
     logger.info(
-        "Receipt job enqueued receipt_id=%s job_id=%s", receipt_id, job.id,
+        "Receipt job enqueued receipt_id=%s job_id=%s",
+        receipt_id,
+        job.id,
     )
