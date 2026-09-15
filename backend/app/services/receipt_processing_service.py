@@ -29,9 +29,13 @@ class ReceiptProcessingService:
     def __init__(self, session_factory: sessionmaker[Session]) -> None:
         self.session_factory = session_factory
 
-    def get_pending_input(self, receipt_id: UUID) -> ReceiptProcessingInput | None:
-        with self.session_factory() as session:
-            receipt = session.get(Receipt, receipt_id)
+    def start_processing(self, receipt_id: UUID) -> ReceiptProcessingInput | None:
+        with self.session_factory.begin() as session:
+            receipt = session.scalar(
+                select(Receipt)
+                .where(Receipt.receipt_id == receipt_id)
+                .with_for_update()
+            )
 
             if receipt is None:
                 return
@@ -39,10 +43,95 @@ class ReceiptProcessingService:
             if receipt.processing_result_saved_at is not None:
                 return
 
-            return ReceiptProcessingInput(
+            if receipt.status not in {
+                ReceiptStatus.UPLOADED,
+                ReceiptStatus.FAILED
+            }:
+                return
+
+            source = ReceiptProcessingInput(
                 receipt_id=receipt.receipt_id,
-                image_object_key=receipt.image_object_key,
+                image_object_key=receipt.image_object_key
             )
+
+            receipt.status = ReceiptStatus.PREPROCESSING
+
+        return source
+
+
+    def advance_status(
+        self,
+        receipt_id: UUID,
+        expected_status: ReceiptStatus,
+        new_status: ReceiptStatus,
+    ) -> bool:
+
+        allowed_transitions = {
+            (
+                ReceiptStatus.PREPROCESSING,
+                ReceiptStatus.OCR_PROCESSING
+            ),
+            (
+                ReceiptStatus.OCR_PROCESSING,
+                ReceiptStatus.PARSING,
+            )
+        }
+
+        if (expected_status, new_status) not in allowed_transitions:
+            raise ValueError(
+                f"Unsupported processing transition: "
+                f"{expected_status.value} -> {new_status.value}"
+            )
+
+        with self.session_factory.begin() as session:
+            receipt = session.scalar(
+                select(Receipt)
+                .where(Receipt.receipt_id == receipt_id)
+                .with_for_update()
+            )
+
+            if receipt is None:
+                return False
+
+            if receipt.processing_result_saved_at is not None:
+                return False
+
+            if receipt.status != expected_status:
+                return False
+
+            receipt.status = new_status
+
+        return True
+
+
+    def mark_failed(
+        self,
+        receipt_id: UUID,
+    ) -> bool:
+
+        with self.session_factory.begin() as session:
+            receipt = session.scalar(
+                select(Receipt)
+                .where(Receipt.receipt_id == receipt_id)
+                .with_for_update()
+            )
+
+            if receipt is None:
+                return False
+
+            if receipt.processing_result_saved_at is not None:
+                return False
+
+            if receipt.status not in {
+                ReceiptStatus.PREPROCESSING,
+                ReceiptStatus.OCR_PROCESSING,
+                ReceiptStatus.PARSING,
+            }:
+                return False
+
+            receipt.status = ReceiptStatus.FAILED
+
+        return True   
 
     def save_result(
         self, receipt_id: UUID, result: ReceiptProcessingResult
