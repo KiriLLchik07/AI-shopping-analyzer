@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.core.exceptions import ReceiptProcessingConflictError
+from backend.app.core.receipt_processing_errors import get_safe_processing_error
 from backend.app.models.enums import ReceiptStatus
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
@@ -43,7 +44,9 @@ class ReceiptProcessingService:
                 receipt_id=receipt.receipt_id, image_object_key=receipt.image_object_key
             )
 
-            repository.set_status(receipt, ReceiptStatus.PREPROCESSING)
+            repository.set_status(
+                receipt, ReceiptStatus.PREPROCESSING, clear_error=True
+            )
 
         return source
 
@@ -85,10 +88,9 @@ class ReceiptProcessingService:
 
         return True
 
-    def mark_failed(
-        self,
-        receipt_id: UUID,
-    ) -> bool:
+    def mark_failed(self, receipt_id: UUID, error: Exception | None = None) -> bool:
+
+        safe_error = get_safe_processing_error(error)
 
         with self.session_factory.begin() as session:
             repository = ReceiptProcessingRepository(session)
@@ -107,7 +109,12 @@ class ReceiptProcessingService:
             }:
                 return False
 
-            repository.set_status(receipt, ReceiptStatus.FAILED)
+            repository.set_processing_error(
+                receipt,
+                status=ReceiptStatus.FAILED,
+                error_code=safe_error.code,
+                error_message=safe_error.message,
+            )
 
         return True
 

@@ -6,10 +6,16 @@ import pytest
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from backend.app.api.dependencies.auth import get_current_user
 from backend.app.core.exceptions import ReceiptProcessingConflictError
+from backend.app.core.receipt_processing_errors import get_safe_processing_error
 from backend.app.db.session import SessionLocal
+from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
 from backend.app.models.enums import ReceiptStatus
+from backend.app.repositories.receipt_processing_repository import (
+    ReceiptProcessingRepository,
+)
 from backend.app.schemas.processing import (
     ReceiptProcessingInput,
     ReceiptProcessingResult,
@@ -20,6 +26,7 @@ from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
     SaveProcessingOutcome,
 )
+from backend.app.storage.exception import ObjectStorageError
 from backend.app.workers import jobs
 
 pytestmark = pytest.mark.integration
@@ -391,7 +398,8 @@ def test_failure_reporting_preserves_original_exception(receipt_id, monkeypatch)
         def preprocess(self, source):
             raise RuntimeError("Original pipeline error")
 
-    def fail_to_record(self, receipt_id):
+    def fail_to_record(self, receipt_id, error=None):
+        assert isinstance(error, RuntimeError)
         raise OSError("Database unavailable")
 
     monkeypatch.setattr(jobs, "get_receipt_pipeline", FailingPipeline)
@@ -417,3 +425,129 @@ def test_parallel_result_saves_are_idempotent(receipt_id):
         SaveProcessingOutcome.ALREADY_SAVED,
     }
     assert len(item_ids(receipt_id)) == 2
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_code"),
+    [
+        (RuntimeError, "processing_failed"),
+        (ObjectStorageError, "image_storage_unavailable"),
+        (ReceiptProcessingConflictError, "processing_conflict"),
+    ],
+)
+def test_processing_error_does_not_store_exception_text(
+    receipt_id, monkeypatch, error_type, expected_code
+):
+    original_error = error_type(
+        "Traceback: password=secret-test-value; internal_host=database.private"
+    )
+
+    class FailingPipeline(StubPipeline):
+        def preprocess(self, source):
+            raise original_error
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", FailingPipeline)
+    with pytest.raises(error_type) as caught:
+        jobs.process_receipt(str(receipt_id))
+    assert caught.value is original_error
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_error_code == expected_code
+        assert receipt.processing_error_message
+        for forbidden in ("secret-test-value", "database.private", "Traceback"):
+            assert forbidden not in receipt.processing_error_message
+        assert receipt.processing_result_saved_at is None
+        assert receipt.raw_ocr_text is None
+
+
+def test_receipt_api_returns_only_safe_processing_error(
+    receipt_id, client, monkeypatch
+):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    error = RuntimeError("SECRET-DIAGNOSTIC Traceback internal SQL")
+    assert service.mark_failed(receipt_id, error)
+    with SessionLocal() as session:
+        user = session.get(Receipt, receipt_id).user
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    expected = get_safe_processing_error(error)
+    for url in (f"/api/receipts/{receipt_id}", "/api/receipts"):
+        response = client.get(url)
+        assert response.status_code == 200
+        body = response.json()
+        receipt_body = body["items"][0] if url == "/api/receipts" else body
+        assert receipt_body["status"] == "failed"
+        assert receipt_body["processing_error_code"] == expected.code
+        assert receipt_body["processing_error_message"] == expected.message
+        for forbidden in ("SECRET-DIAGNOSTIC", "Traceback", "internal SQL", "exc_info"):
+            assert forbidden not in response.text
+        assert "traceback" not in receipt_body
+
+
+def test_new_processing_attempt_clears_previous_error(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    assert service.mark_failed(receipt_id, RuntimeError("First failure"))
+    assert service.start_processing(receipt_id) is not None
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.PREPROCESSING
+        assert receipt.processing_error_code is None
+        assert receipt.processing_error_message is None
+
+
+def test_successful_save_clears_previous_error(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    assert service.mark_failed(receipt_id, RuntimeError("Earlier failure"))
+    assert service.save_result(receipt_id, make_result()) == SaveProcessingOutcome.SAVED
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.processing_error_code is None
+        assert receipt.processing_error_message is None
+
+
+def test_late_error_does_not_overwrite_saved_result(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    service.save_result(receipt_id, make_result())
+    assert not service.mark_failed(receipt_id, RuntimeError("Late failure"))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.processing_error_code is None
+        assert receipt.processing_error_message is None
+
+
+def test_error_and_status_roll_back_together(receipt_id, monkeypatch):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    original = ReceiptProcessingRepository.set_processing_error
+
+    def fail_after_flush(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        raise RuntimeError("Failure before commit")
+
+    monkeypatch.setattr(
+        ReceiptProcessingRepository, "set_processing_error", fail_after_flush
+    )
+    with pytest.raises(RuntimeError, match="Failure before commit"):
+        service.mark_failed(receipt_id, RuntimeError("OCR failure"))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.PREPROCESSING
+        assert receipt.processing_error_code is None
+        assert receipt.processing_error_message is None
+
+
+def test_mark_failed_without_exception_uses_generic_message(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    assert service.mark_failed(receipt_id)
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.processing_error_code == "processing_failed"
+        assert (
+            receipt.processing_error_message == get_safe_processing_error(None).message
+        )

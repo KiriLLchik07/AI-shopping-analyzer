@@ -31,8 +31,29 @@ class ReceiptProcessingRepository:
             is not None
         )
 
-    def set_status(self, receipt: Receipt, status: ReceiptStatus) -> None:
+    def set_status(
+        self, receipt: Receipt, status: ReceiptStatus, clear_error: bool = False
+    ) -> None:
+
         receipt.status = status
+        if clear_error:
+            receipt.processing_error_code = None
+            receipt.processing_error_message = None
+
+        self.session.flush()
+
+    def set_processing_error(
+        self,
+        receipt: Receipt,
+        status: ReceiptStatus,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+
+        receipt.status = status
+        receipt.processing_error_code = error_code
+        receipt.processing_error_message = error_message
+
         self.session.flush()
 
     def store_result(
@@ -52,4 +73,8 @@ class ReceiptProcessingRepository:
         receipt.raw_ocr_text = raw_ocr_text
         receipt.processing_result_saved_at = saved_at
         receipt.status = status
+
+        receipt.processing_error_code = None
+        receipt.processing_error_message = None
+
         self.session.flush()

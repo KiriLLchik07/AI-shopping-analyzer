@@ -72,6 +72,9 @@ class Receipt(Base):
         DateTime(timezone=True)
     )
 
+    processing_error_code: Mapped[str | None] = mapped_column(String(64))
+    processing_error_message: Mapped[str | None] = mapped_column(String(512))
+
     user: Mapped["User"] = relationship("User", back_populates="receipts")
     items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", passive_deletes=True

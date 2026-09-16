@@ -53,6 +53,8 @@ class ReceiptResponse(BaseModel):
     image_object_key: str
     raw_ocr_text: str | None
     status: ReceiptStatus
+    processing_error_code: str | None = None
+    processing_error_message: str | None = None
     created_at: datetime
     updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

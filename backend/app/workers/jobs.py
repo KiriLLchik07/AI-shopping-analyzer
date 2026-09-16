@@ -95,7 +95,7 @@ def process_receipt(receipt_id: str) -> None:
             job_id,
             outcome.value,
         )
-    except Exception:
+    except Exception as error:
         logger.exception(
             "Receipt processing failed receipt_id=%s job_id=%s",
             receipt_id,
@@ -103,10 +103,10 @@ def process_receipt(receipt_id: str) -> None:
         )
 
         try:
-            service.mark_failed(parsed_receipt_id)
+            service.mark_failed(parsed_receipt_id, error=error)
         except Exception:
             logger.exception(
-                "Could not mark receipt as failed receipt_id=%s job_id=%s",
+                "Could not persist receipt processing error receipt_id=%s job_id=%s",
                 receipt_id,
                 job_id,
             )
