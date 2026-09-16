@@ -3,12 +3,13 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from backend.app.core.config import Settings, setting
-from backend.app.storage.exception import ObjectStorageError
-from backend.app.workers import retry_policy
 from botocore.exceptions import ClientError, EndpointConnectionError
 from pydantic import ValidationError
 from redis.exceptions import RedisError
+
+from backend.app.core.config import Settings, setting
+from backend.app.storage.exception import ObjectStorageError
+from backend.app.workers import retry_policy
 
 
 @pytest.mark.parametrize("intervals", [(), (10,), (10, 30, 90), (10, 10), (86400,)])

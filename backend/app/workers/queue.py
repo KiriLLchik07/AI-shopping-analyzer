@@ -1,10 +1,17 @@
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from redis import Redis
-from rq import Queue, Retry
+from redis.exceptions import RedisError
+from rq import Callback, Queue, Retry
 
 from backend.app.core.config import setting
+from backend.app.core.logging import (
+    get_correlation_id,
+    log_context,
+    normalize_correlation_id,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -20,27 +27,52 @@ receipt_queue = Queue(
 )
 
 
-def enqueue_receipt(receipt_id: UUID, processing_version: int = 1) -> str:
+def enqueue_receipt(
+    receipt_id: UUID,
+    processing_version: int = 1,
+) -> str:
     intervals = list(setting.receipt_retry_intervals_seconds)
 
-    retry = Retry(max=len(intervals), interval=intervals) if intervals else None
-
-    job = receipt_queue.enqueue(
-        "backend.app.workers.jobs.process_receipt",
-        args=(str(receipt_id), processing_version),
-        retry=retry,
-        on_failure=("backend.app.workers.retry_policy.receipt_failure_callback"),
+    retry = (
+        Retry(max=len(intervals), interval=intervals)
+        if intervals
+        else None
     )
 
-    logger.info(
-        "Receipt job enqueued "
-        "receipt_id=%s processing_version=%s job_id=%s "
-        "max_retries=%s retry_intervals=%s",
-        receipt_id,
-        processing_version,
-        job.id,
-        len(intervals),
-        intervals,
-    )
+    correlation_id = normalize_correlation_id(get_correlation_id())
+
+    job_id = str(uuid4())
+
+    with log_context(
+        correlation_id=correlation_id,
+        job_id=job_id,
+        receipt_id=str(receipt_id),
+        processing_version=processing_version,
+    ):
+        logger.info("Receipt enqueue requested")
+
+        try:
+            job = receipt_queue.enqueue(
+                "backend.app.workers.jobs.process_receipt",
+                args=(str(receipt_id), processing_version),
+                job_id=job_id,
+                meta={
+                    "correlation_id": correlation_id,
+                },
+                retry=retry,
+                on_failure=Callback(
+                    "backend.app.workers.retry_policy."
+                    "receipt_failure_callback"
+                ),
+            )
+        except RedisError:
+            logger.exception("Could not confirm receipt enqueue")
+            raise
+
+        logger.info(
+            "Receipt enqueued max_retries=%s retry_intervals=%s",
+            len(intervals),
+            intervals,
+        )
 
     return job.id

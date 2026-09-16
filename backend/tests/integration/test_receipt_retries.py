@@ -2,6 +2,12 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from rq import SimpleWorker
+from rq.job import Job, JobStatus
+from rq.scheduler import RQScheduler
+from rq.timeouts import TimerDeathPenalty
+from sqlalchemy import select
+
 from backend.app.core.config import setting
 from backend.app.db.session import SessionLocal
 from backend.app.models import Receipt, ReceiptItem, User
@@ -12,11 +18,6 @@ from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.services.receipt_processing_service import ReceiptProcessingService
 from backend.app.workers import jobs
 from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
-from rq import SimpleWorker
-from rq.job import Job, JobStatus
-from rq.scheduler import RQScheduler
-from rq.timeouts import TimerDeathPenalty
-from sqlalchemy import select
 
 pytestmark = pytest.mark.integration
 
