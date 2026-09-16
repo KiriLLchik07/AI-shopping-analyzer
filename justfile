@@ -20,3 +20,7 @@
 [working-directory: 'backend']
 @migration_upgrade:
     uv run alembic upgrade head
+
+[working-directory: 'backend']
+@migration_autorevision message:
+    uv run alembic revision --autogenerate -m "{{message}}"
