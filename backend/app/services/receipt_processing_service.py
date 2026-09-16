@@ -232,3 +232,19 @@ class ReceiptProcessingService:
             )
 
         return SaveProcessingOutcome.SAVED
+
+    def can_retry_processing(self, receipt_id: UUID, processing_version: int) -> bool:
+        with self.session_factory.begin() as session:
+            repository = ReceiptProcessingRepository(session)
+            receipt = repository.get_for_update(receipt_id)
+
+            if receipt is None:
+                return False
+
+            if receipt.processing_result_saved_at is not None:
+                return False
+
+            if receipt.processing_version != processing_version:
+                return False
+
+            return receipt.status in {ReceiptStatus.UPLOADED, ReceiptStatus.FAILED}

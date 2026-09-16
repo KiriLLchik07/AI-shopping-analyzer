@@ -9,7 +9,7 @@ def main() -> None:
         connection=queue_connection,
     )
 
-    worker.work()
+    worker.work(with_scheduler=True)
 
 
 if __name__ == "__main__":
