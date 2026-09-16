@@ -75,6 +75,19 @@ class Receipt(Base):
     processing_error_code: Mapped[str | None] = mapped_column(String(64))
     processing_error_message: Mapped[str | None] = mapped_column(String(512))
 
+    processing_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    items_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    processing_items_revision: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    processing_replace_items: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     user: Mapped["User"] = relationship("User", back_populates="receipts")
     items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", passive_deletes=True

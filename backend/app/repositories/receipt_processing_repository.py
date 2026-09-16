@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import Receipt, ReceiptItem
@@ -11,15 +11,23 @@ from backend.app.schemas.request import ReceiptItemCreateRequest
 
 
 class ReceiptProcessingRepository:
-    """Persistence operations; the caller owns the transaction."""
-
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def get_for_update(self, receipt_id: UUID) -> Receipt | None:
-        return self.session.scalar(
-            select(Receipt).where(Receipt.receipt_id == receipt_id).with_for_update()
+    def get_for_update(
+        self, receipt_id: UUID, user_id: UUID | None = None
+    ) -> Receipt | None:
+
+        query = select(Receipt).where(
+            Receipt.receipt_id == receipt_id,
         )
+
+        if user_id is not None:
+            query = query.where(
+                Receipt.receipt_user_id == user_id,
+            )
+
+        return self.session.scalar(query.with_for_update())
 
     def has_items(self, receipt_id: UUID) -> bool:
         return (
@@ -56,6 +64,18 @@ class ReceiptProcessingRepository:
 
         self.session.flush()
 
+    def prepare_process(self, receipt: Receipt, replace_items: bool) -> None:
+        receipt.processing_version += 1
+        receipt.processing_items_revision = receipt.items_revision
+        receipt.processing_replace_items = replace_items
+
+        receipt.processing_result_saved_at = None
+        receipt.processing_error_code = None
+        receipt.processing_error_message = None
+        receipt.status = ReceiptStatus.UPLOADED
+
+        self.session.flush()
+
     def store_result(
         self,
         receipt: Receipt,
@@ -64,6 +84,12 @@ class ReceiptProcessingRepository:
         saved_at: datetime,
         status: ReceiptStatus,
     ) -> None:
+
+        if receipt.processing_replace_items:
+            self.session.execute(
+                delete(ReceiptItem).where(ReceiptItem.receipt_id == receipt.receipt_id)
+            )
+
         self.session.add_all(
             [
                 ReceiptItem(receipt_id=receipt.receipt_id, **item.model_dump())
@@ -76,5 +102,7 @@ class ReceiptProcessingRepository:
 
         receipt.processing_error_code = None
         receipt.processing_error_message = None
+        receipt.processing_replace_items = False
+        receipt.items_revision += 1
 
         self.session.flush()

@@ -13,6 +13,7 @@ from fastapi import (
     UploadFile,
 )
 from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
@@ -24,6 +25,7 @@ from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
     ReceiptItemUpdateRequest,
     ReceiptListParams,
+    ReceiptReprocessRequest,
     ReceiptUpdateRequest,
 )
 from backend.app.schemas.response import (
@@ -31,8 +33,10 @@ from backend.app.schemas.response import (
     ReceiptImageUrlResponse,
     ReceiptItemResponse,
     ReceiptListResponse,
+    ReceiptReprocessResponse,
     ReceiptResponse,
 )
+from backend.app.services.receipt_processing_service import ReceiptProcessingService
 from backend.app.services.receipt_service import ReceiptService
 from backend.app.services.receipt_upload_service import ReceiptUploadService
 from backend.app.storage.interface import ObjectStorage
@@ -178,7 +182,9 @@ def upload_receipt(
     )
     receipt = service.upload(user_id=user.user_id, file=file.file)
     try:
-        enqueue_receipt(receipt.receipt_id)
+        enqueue_receipt(
+            receipt.receipt_id, processing_version=receipt.processing_version
+        )
     except RedisError as error:
         logger.exception(
             "Could not confirm receipt enqueue receipt_id=%s",
@@ -227,4 +233,67 @@ def get_receipt_image_url(
     return ReceiptImageUrlResponse(
         image_url=image_url,
         expires_in=image_settings.url_ttl_seconds,
+    )
+
+
+@router.post(
+    "/api/receipts/{receipt_id}/reprocess",
+    status_code=202,
+    response_model=ReceiptReprocessResponse,
+)
+def reprocess_receipt(
+    receipt_id: Annotated[UUID, Path()],
+    user: Annotated[User, Depends(get_current_user)],
+    payload: ReceiptReprocessRequest | None = None,
+) -> ReceiptReprocessResponse:
+    service = ReceiptProcessingService(SessionLocal)
+
+    ticket = service.prepare_process(
+        receipt_id=receipt_id,
+        user_id=user.user_id,
+        replace_items=payload.replace_items if payload else False,
+    )
+
+    try:
+        job_id = enqueue_receipt(
+            ticket.receipt_id,
+            processing_version=ticket.processing_version,
+        )
+    except RedisError as error:
+        logger.exception(
+            "Could not confirm reprocess enqueue receipt_id=%s processing_version=%s",
+            ticket.receipt_id,
+            ticket.processing_version,
+        )
+
+        try:
+            service.mark_enqueue_unconfirmed(
+                receipt_id=ticket.receipt_id,
+                processing_version=ticket.processing_version,
+            )
+        except SQLAlchemyError:
+            logger.exception(
+                "Could not persist reprocess enqueue failure "
+                "receipt_id=%s processing_version=%s",
+                ticket.receipt_id,
+                ticket.processing_version,
+            )
+
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "receipt_enqueue_unconfirmed",
+                "message": (
+                    "Не удалось подтвердить постановку чека "
+                    "в очередь. Проверьте текущий статус чека."
+                ),
+                "receipt_id": str(ticket.receipt_id),
+                "processing_version": ticket.processing_version,
+            },
+        ) from error
+
+    return ReceiptReprocessResponse(
+        receipt_id=ticket.receipt_id,
+        processing_version=ticket.processing_version,
+        job_id=job_id,
     )

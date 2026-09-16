@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.models.enums import ReceiptStatus
@@ -157,3 +157,11 @@ class ReceiptRepository:
         self.db_session.flush()
 
         return receipt
+
+    def increment_items_revision(self, receipt_id: UUID) -> None:
+        self.db_session.execute(
+            update(Receipt)
+            .where(Receipt.receipt_id == receipt_id)
+            .values(items_revision=Receipt.items_revision + 1)
+        )
+        self.db_session.flush()

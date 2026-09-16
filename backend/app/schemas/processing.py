@@ -16,3 +16,10 @@ class ReceiptProcessingInput(BaseModel):
 
     receipt_id: UUID
     image_object_key: str
+
+
+class ReceiptProcessTicket(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    receipt_id: UUID
+    processing_version: int

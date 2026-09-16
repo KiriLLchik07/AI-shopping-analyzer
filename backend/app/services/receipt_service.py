@@ -73,10 +73,14 @@ class ReceiptService:
 
         return receipts, total
 
-    def get_receipt_by_id(self, receipt_id: UUID, user_id: UUID) -> Receipt:
-        receipt = self.repository.get_receipt_by_id(receipt_id, user_id)
+    def get_receipt_by_id(
+        self, receipt_id: UUID, user_id: UUID, for_update: bool = False
+    ) -> Receipt:
+        receipt = self.repository.get_receipt_by_id(
+            receipt_id, user_id, for_update=for_update
+        )
         if receipt is None:
-            raise ReceiptNotFoundError
+            raise ReceiptNotFoundError()
 
         return receipt
 
@@ -141,7 +145,9 @@ class ReceiptService:
         user_id: UUID,
     ) -> ReceiptItem:
 
-        receipt = self.get_receipt_by_id(receipt_id=receipt_id, user_id=user_id)
+        receipt = self.get_receipt_by_id(
+            receipt_id=receipt_id, user_id=user_id, for_update=True
+        )
 
         self._validate_category(payload.category_id)
 
@@ -151,6 +157,7 @@ class ReceiptService:
             receipt_id=receipt.receipt_id, item_data=item_data
         )
 
+        self.repository.increment_items_revision(receipt_id)
         self.db_session.commit()
         self.db_session.refresh(receipt_item)
 
@@ -164,8 +171,7 @@ class ReceiptService:
     ) -> ReceiptItem:
 
         receipt = self.get_receipt_by_id(
-            receipt_id=receipt_id,
-            user_id=user_id,
+            receipt_id=receipt_id, user_id=user_id, for_update=True
         )
 
         receipt_item = self.repository.get_receipt_item(
@@ -201,6 +207,7 @@ class ReceiptService:
             update_data=update_data,
         )
 
+        self.repository.increment_items_revision(receipt_id)
         self.db_session.commit()
         self.db_session.refresh(receipt_item)
 
@@ -219,6 +226,7 @@ class ReceiptService:
         )
 
         self.repository.delete_receipt_item(receipt_item)
+        self.repository.increment_items_revision(receipt_id)
         self.db_session.commit()
 
     def _validate_category(self, category_id: UUID | None) -> None:

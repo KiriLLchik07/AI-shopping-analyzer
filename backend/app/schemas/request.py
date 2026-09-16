@@ -120,3 +120,9 @@ class ReceiptItemUpdateRequest(BaseModel):
                 raise ValueError(f"{field} cannot be null")
 
         return self
+
+
+class ReceiptReprocessRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    replace_items: bool = Field(default=False, strict=True)
