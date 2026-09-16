@@ -398,7 +398,7 @@ def test_failure_reporting_preserves_original_exception(receipt_id, monkeypatch)
         def preprocess(self, source):
             raise RuntimeError("Original pipeline error")
 
-    def fail_to_record(self, receipt_id, error=None):
+    def fail_to_record(self, receipt_id, error=None, processing_version=1):
         assert isinstance(error, RuntimeError)
         raise OSError("Database unavailable")
 
