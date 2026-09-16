@@ -4,19 +4,13 @@ from uuid import UUID
 from rq import get_current_job
 
 from backend.app.db.session import SessionLocal
-from backend.app.schemas.processing import ReceiptProcessingResult
+from backend.app.models.enums import ReceiptStatus
+from backend.app.services.receipt_pipeline import get_receipt_pipeline
 from backend.app.services.receipt_processing_service import (
-    ReceiptProcessingInput,
     ReceiptProcessingService,
 )
 
 logger = logging.getLogger(__name__)
-
-
-def build_receipt_result(source: ReceiptProcessingInput) -> ReceiptProcessingResult:
-    # Здесь будет подключаться OCR pipeline
-
-    raise NotImplementedError("Receipt OCR pipeline is not implemented yet")
 
 
 def process_receipt(receipt_id: str) -> None:
@@ -27,29 +21,93 @@ def process_receipt(receipt_id: str) -> None:
 
     service = ReceiptProcessingService(SessionLocal)
 
-    logger.info(
-        "Receipt job started receipt_id=%s job_id=%s",
-        receipt_id,
-        job_id,
-    )
-
-    source = service.get_pending_input(parsed_receipt_id)
+    source = service.start_processing(parsed_receipt_id)
 
     if source is None:
         logger.info(
-            "Receipt job skipped: receipt deleted or result already saved "
+            "Receipt job skipped: receipt missing, active or finished "
             "receipt_id=%s job_id=%s",
             receipt_id,
             job_id,
         )
         return
 
-    result = build_receipt_result(source=source)
-    outcome = service.save_result(receipt_id=parsed_receipt_id, result=result)
+    try:
+        pipeline = get_receipt_pipeline()
+        logger.info(
+            "Receipt job started receipt_id=%s job_id=%s",
+            receipt_id,
+            job_id,
+        )
 
-    logger.info(
-        "Receipt job finished receipt_id=%s job_id=%s outcome=%s",
-        receipt_id,
-        job_id,
-        outcome.value,
-    )
+        image = pipeline.preprocess(source)
+
+        if not service.advance_status(
+            receipt_id=parsed_receipt_id,
+            expected_status=ReceiptStatus.PREPROCESSING,
+            new_status=ReceiptStatus.OCR_PROCESSING,
+        ):
+            logger.info(
+                "Receipt job stopped before OCR: state changed receipt_id=%s job_id=%s",
+                receipt_id,
+                job_id,
+            )
+            return
+
+        logger.info(
+            "Receipt OCR started receipt_id=%s job_id=%s",
+            receipt_id,
+            job_id,
+        )
+
+        raw_text = pipeline.recognize(image)
+
+        if not service.advance_status(
+            receipt_id=parsed_receipt_id,
+            expected_status=ReceiptStatus.OCR_PROCESSING,
+            new_status=ReceiptStatus.PARSING,
+        ):
+            logger.info(
+                "Receipt job stopped before parsing: state changed "
+                "receipt_id=%s job_id=%s",
+                receipt_id,
+                job_id,
+            )
+            return
+
+        logger.info(
+            "Receipt parsing started receipt_id=%s job_id=%s",
+            receipt_id,
+            job_id,
+        )
+
+        result = pipeline.parse(raw_text)
+
+        result = result.model_copy(
+            update={"raw_ocr_text": raw_text},
+        )
+
+        outcome = service.save_result(receipt_id=parsed_receipt_id, result=result)
+
+        logger.info(
+            "Receipt job finished receipt_id=%s job_id=%s outcome=%s",
+            receipt_id,
+            job_id,
+            outcome.value,
+        )
+    except Exception:
+        logger.exception(
+            "Receipt processing failed receipt_id=%s job_id=%s",
+            receipt_id,
+            job_id,
+        )
+
+        try:
+            service.mark_failed(parsed_receipt_id)
+        except Exception:
+            logger.exception(
+                "Could not mark receipt as failed receipt_id=%s job_id=%s",
+                receipt_id,
+                job_id,
+            )
+        raise

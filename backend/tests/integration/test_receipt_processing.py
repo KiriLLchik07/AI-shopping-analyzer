@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from threading import Barrier, Event
 from uuid import UUID, uuid4
 
 import pytest
@@ -9,8 +9,13 @@ from sqlalchemy.exc import IntegrityError
 from backend.app.core.exceptions import ReceiptProcessingConflictError
 from backend.app.db.session import SessionLocal
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.schemas.processing import ReceiptProcessingResult
+from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.processing import (
+    ReceiptProcessingInput,
+    ReceiptProcessingResult,
+)
 from backend.app.schemas.request import ReceiptItemCreateRequest
+from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
     SaveProcessingOutcome,
@@ -59,50 +64,69 @@ def item_ids(receipt_id: UUID) -> set[UUID]:
         )
 
 
-def test_repeated_job_keeps_same_items(
-    receipt_id: UUID,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = []
+class StubPipeline(ReceiptPipeline):
+    def preprocess(self, source: ReceiptProcessingInput) -> bytes:
+        return b"test-image"
 
-    def fake_pipeline(source):
-        calls.append(source.receipt_id)
+    def recognize(self, image: bytes) -> str:
+        return "Milk\nBread"
+
+    def parse(self, raw_text: str) -> ReceiptProcessingResult:
         return make_result()
 
-    monkeypatch.setattr(jobs, "build_receipt_result", fake_pipeline)
 
+def receipt_status(receipt_id: UUID) -> ReceiptStatus:
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt is not None
+        return receipt.status
+
+
+def test_repeated_job_keeps_same_items(receipt_id, monkeypatch):
+    calls = []
+
+    class CountingPipeline(StubPipeline):
+        def preprocess(self, source):
+            calls.append(source.receipt_id)
+            return super().preprocess(source)
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", CountingPipeline)
     jobs.process_receipt(str(receipt_id))
     first_ids = item_ids(receipt_id)
-
     jobs.process_receipt(str(receipt_id))
-
     assert len(first_ids) == 2
     assert item_ids(receipt_id) == first_ids
     assert calls == [receipt_id]
+    assert receipt_status(receipt_id) == ReceiptStatus.NEED_REVIEW
 
 
-def test_parallel_jobs_save_only_once(
-    receipt_id: UUID,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    barrier = Barrier(2)
+def test_parallel_jobs_save_only_once(receipt_id, monkeypatch):
+    entered = Event()
+    release = Event()
+    calls = []
 
-    def fake_pipeline(source):
-        # Оба запуска должны пройти предварительную проверку
-        # до того, как один из них сохранит результат.
-        barrier.wait(timeout=10)
-        return make_result()
+    class PausingPipeline(StubPipeline):
+        def preprocess(self, source):
+            calls.append(source.receipt_id)
+            entered.set()
+            if not release.wait(timeout=10):
+                raise TimeoutError("Test did not release pipeline")
+            return super().preprocess(source)
 
-    monkeypatch.setattr(jobs, "build_receipt_result", fake_pipeline)
-
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", PausingPipeline)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [
-            executor.submit(jobs.process_receipt, str(receipt_id)) for _ in range(2)
-        ]
-        for future in futures:
-            future.result(timeout=20)
-
+        first = executor.submit(jobs.process_receipt, str(receipt_id))
+        try:
+            assert entered.wait(timeout=5)
+            second = executor.submit(jobs.process_receipt, str(receipt_id))
+            second.result(timeout=5)
+            assert calls == [receipt_id]
+            assert receipt_status(receipt_id) == ReceiptStatus.PREPROCESSING
+        finally:
+            release.set()
+        first.result(timeout=10)
     assert len(item_ids(receipt_id)) == 2
+    assert receipt_status(receipt_id) == ReceiptStatus.NEED_REVIEW
 
 
 def test_failed_save_rolls_back_items_and_marker(
@@ -223,3 +247,173 @@ def test_deleted_receipt_is_skipped() -> None:
         service.save_result(uuid4(), make_result())
         == SaveProcessingOutcome.RECEIPT_DELETED
     )
+
+
+def test_status_is_committed_before_each_step(receipt_id, monkeypatch):
+    observed = []
+
+    class ObservingPipeline(StubPipeline):
+        def preprocess(self, source):
+            assert isinstance(source.receipt_id, UUID)
+            observed.append(receipt_status(receipt_id))
+            return super().preprocess(source)
+
+        def recognize(self, image):
+            assert image == b"test-image"
+            observed.append(receipt_status(receipt_id))
+            return super().recognize(image)
+
+        def parse(self, raw_text):
+            assert raw_text == "Milk\nBread"
+            observed.append(receipt_status(receipt_id))
+            return ReceiptProcessingResult(items=make_result().items)
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", ObservingPipeline)
+    jobs.process_receipt(str(receipt_id))
+    assert observed == [
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        ReceiptStatus.PARSING,
+    ]
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.raw_ocr_text == "Milk\nBread"
+        assert receipt.processing_result_saved_at is not None
+        assert len(receipt.items) == 2
+
+
+@pytest.mark.parametrize(
+    ("step", "expected_status"),
+    [
+        ("preprocess", ReceiptStatus.PREPROCESSING),
+        ("recognize", ReceiptStatus.OCR_PROCESSING),
+        ("parse", ReceiptStatus.PARSING),
+    ],
+)
+def test_pipeline_error_sets_failed(receipt_id, monkeypatch, step, expected_status):
+    pipeline = StubPipeline()
+
+    def fail(*args):
+        assert receipt_status(receipt_id) == expected_status
+        raise RuntimeError("Test pipeline failure")
+
+    monkeypatch.setattr(pipeline, step, fail)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
+    with pytest.raises(RuntimeError, match="Test pipeline failure"):
+        jobs.process_receipt(str(receipt_id))
+    assert receipt_status(receipt_id) == ReceiptStatus.FAILED
+    assert item_ids(receipt_id) == set()
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).processing_result_saved_at is None
+
+
+def test_failed_receipt_can_be_started_again(receipt_id, monkeypatch):
+    class FailingPipeline(StubPipeline):
+        def recognize(self, image):
+            raise RuntimeError("Temporary OCR failure")
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", FailingPipeline)
+    with pytest.raises(RuntimeError, match="Temporary OCR failure"):
+        jobs.process_receipt(str(receipt_id))
+    assert receipt_status(receipt_id) == ReceiptStatus.FAILED
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", StubPipeline)
+    jobs.process_receipt(str(receipt_id))
+    assert receipt_status(receipt_id) == ReceiptStatus.NEED_REVIEW
+    assert len(item_ids(receipt_id)) == 2
+
+
+@pytest.mark.parametrize("status", [ReceiptStatus.NEED_REVIEW, ReceiptStatus.COMPLETED])
+def test_finished_receipt_status_cannot_be_overwritten(receipt_id, status):
+    service = ReceiptProcessingService(SessionLocal)
+    service.save_result(receipt_id, make_result())
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).status = status
+    assert service.start_processing(receipt_id) is None
+    assert not service.advance_status(
+        receipt_id, ReceiptStatus.PREPROCESSING, ReceiptStatus.OCR_PROCESSING
+    )
+    assert not service.mark_failed(receipt_id)
+    assert receipt_status(receipt_id) == status
+
+
+def test_invalid_and_stale_transitions_do_not_change_status(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    with pytest.raises(ValueError, match="Unsupported processing transition"):
+        service.advance_status(
+            receipt_id, ReceiptStatus.PREPROCESSING, ReceiptStatus.PARSING
+        )
+    assert not service.advance_status(
+        receipt_id, ReceiptStatus.OCR_PROCESSING, ReceiptStatus.PARSING
+    )
+    assert receipt_status(receipt_id) == ReceiptStatus.PREPROCESSING
+
+
+def test_deleted_during_preprocessing_stops_pipeline(receipt_id, monkeypatch):
+    class DeletingPipeline(StubPipeline):
+        def preprocess(self, source):
+            with SessionLocal.begin() as session:
+                session.execute(delete(Receipt).where(Receipt.receipt_id == receipt_id))
+            return b"test-image"
+
+        def recognize(self, image):
+            pytest.fail("OCR must not run after receipt deletion")
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", DeletingPipeline)
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id) is None
+
+
+def test_save_failure_sets_failed_without_partial_result(receipt_id, monkeypatch):
+    class InvalidResultPipeline(StubPipeline):
+        def parse(self, raw_text):
+            return ReceiptProcessingResult(
+                items=(
+                    ReceiptItemCreateRequest(
+                        raw_name="Invalid", quantity=1, category_id=uuid4()
+                    ),
+                )
+            )
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", InvalidResultPipeline)
+    with pytest.raises(IntegrityError):
+        jobs.process_receipt(str(receipt_id))
+    assert receipt_status(receipt_id) == ReceiptStatus.FAILED
+    assert item_ids(receipt_id) == set()
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).processing_result_saved_at is None
+
+
+def test_failure_reporting_preserves_original_exception(receipt_id, monkeypatch):
+    class FailingPipeline(StubPipeline):
+        def preprocess(self, source):
+            raise RuntimeError("Original pipeline error")
+
+    def fail_to_record(self, receipt_id):
+        raise OSError("Database unavailable")
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", FailingPipeline)
+    monkeypatch.setattr(ReceiptProcessingService, "mark_failed", fail_to_record)
+    with pytest.raises(RuntimeError, match="Original pipeline error"):
+        jobs.process_receipt(str(receipt_id))
+
+
+def test_parallel_result_saves_are_idempotent(receipt_id):
+    barrier = Barrier(2)
+
+    def save():
+        barrier.wait(timeout=5)
+        return ReceiptProcessingService(SessionLocal).save_result(
+            receipt_id, make_result()
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(save) for _ in range(2)]
+        outcomes = [future.result(timeout=10) for future in futures]
+    assert set(outcomes) == {
+        SaveProcessingOutcome.SAVED,
+        SaveProcessingOutcome.ALREADY_SAVED,
+    }
+    assert len(item_ids(receipt_id)) == 2
