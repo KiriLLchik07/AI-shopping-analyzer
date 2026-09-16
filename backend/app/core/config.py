@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     ) -> tuple[int, ...]:
         if any(
             current > following
-            for current, following in itertools.pairwise(value, value[1:])
+            for current, following in itertools.pairwise(value)
         ):
             raise ValueError("RECEIPT_RETRY_INTERVALS_SECONDS must be non-decreasing")
 

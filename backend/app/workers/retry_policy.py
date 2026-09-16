@@ -1,7 +1,13 @@
 import logging
+from types import TracebackType
 from uuid import UUID
 
 import httpx
+from backend.app.db.session import SessionLocal
+from backend.app.services.receipt_processing_service import (
+    ReceiptProcessingService,
+)
+from backend.app.storage.exception import ObjectStorageError
 from botocore.exceptions import (
     ClientError,
     ConnectionClosedError,
@@ -9,14 +15,9 @@ from botocore.exceptions import (
     EndpointConnectionError,
     ReadTimeoutError,
 )
+from redis import Redis
 from redis.exceptions import RedisError
 from rq.job import Job
-
-from backend.app.db.session import SessionLocal
-from backend.app.services.receipt_processing_service import (
-    ReceiptProcessingService,
-)
-from backend.app.storage.exception import ObjectStorageError
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,10 @@ def is_retryable_error(error: BaseException) -> bool:
 
 def receipt_failure_callback(
     job: Job,
+    connection: Redis,
     exc_type: type[BaseException],
     exc_value: BaseException,
+    traceback: TracebackType | None,
 ) -> None:
     retries_left = job.retries_left or 0
 
