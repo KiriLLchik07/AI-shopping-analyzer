@@ -1,4 +1,5 @@
 import logging
+from traceback import StackSummary
 from types import TracebackType
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from botocore.exceptions import (
 )
 from redis import Redis
 from redis.exceptions import RedisError
+from rq.exceptions import AbandonedJobError
 from rq.job import Job
 
 from backend.app.core.logging import log_context
@@ -21,7 +23,6 @@ from backend.app.services.receipt_processing_service import (
 )
 from backend.app.storage.exception import ObjectStorageError
 from backend.app.workers.log_context import get_job_log_context
-
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,17 @@ RETRYABLE_STORAGE_CODES = {
 }
 
 
+class WorkHorseInterruptedError(RuntimeError):
+    pass
+
+def is_interruption_error(error: BaseException) -> bool:
+    return isinstance(error, (AbandonedJobError, WorkHorseInterruptedError))
+
+
 def is_retryable_error(error: BaseException) -> bool:
+    if is_interruption_error(error):
+        return True
+
     if isinstance(error, ObjectStorageError):
         cause = error.__cause__
 
@@ -77,12 +88,28 @@ def is_retryable_error(error: BaseException) -> bool:
             {},
         ).get("Code")
 
-        return (
-            status in RETRYABLE_HTTP_STATUSES
-            or code in RETRYABLE_STORAGE_CODES
-        )
+        return status in RETRYABLE_HTTP_STATUSES or code in RETRYABLE_STORAGE_CODES
 
     return False
+
+
+def get_receipt_job_arguments(job: Job) -> tuple[UUID, int]:
+    receipt_id = UUID(str(job.args[0]))
+    processing_version = int(job.args[1]) if len(job.args) > 1 else 1
+    return receipt_id, processing_version
+
+
+def restore_interrupted_receipt(job: Job) -> None:
+    receipt_id, processing_version = get_receipt_job_arguments(job)
+    service = ReceiptProcessingService(SessionLocal)
+    try:
+        changed = service.mark_interrupted(
+            receipt_id=receipt_id, processing_version=processing_version
+        )
+    except Exception:
+        logger.exception("Could not persist interrupted receipt state")
+        raise
+    logger.info("Receipt interruption handled state_changed=%s", changed)
 
 
 def receipt_failure_callback(
@@ -90,9 +117,12 @@ def receipt_failure_callback(
     connection: Redis,
     exc_type: type[BaseException],
     exc_value: BaseException,
-    traceback: TracebackType | None,
+    traceback: TracebackType | StackSummary | None,
 ) -> None:
     with log_context(**get_job_log_context(job)):
+        if is_interruption_error(exc_value):
+            restore_interrupted_receipt(job)
+
         _apply_retry_policy(
             job=job,
             exc_type=exc_type,
@@ -116,10 +146,7 @@ def _apply_retry_policy(
             reason = "non_retryable_error"
         else:
             try:
-                receipt_id = UUID(str(job.args[0]))
-                processing_version = (
-                    int(job.args[1]) if len(job.args) > 1 else 1
-                )
+                receipt_id, processing_version = get_receipt_job_arguments(job)
 
                 service = ReceiptProcessingService(SessionLocal)
 
@@ -137,16 +164,13 @@ def _apply_retry_policy(
             except Exception:
                 reason = "retry_state_check_failed"
 
-                logger.exception(
-                    "Could not verify receipt retry eligibility"
-                )
+                logger.exception("Could not verify receipt retry eligibility")
 
     if retry_allowed:
         job.retries_left = retries_left
 
         logger.info(
-            "Receipt retry permitted "
-            "delay_seconds=%s retries_left=%s error_type=%s",
+            "Receipt retry permitted delay_seconds=%s retries_left=%s error_type=%s",
             job.get_retry_interval(),
             retries_left,
             exc_type.__name__,
@@ -161,6 +185,17 @@ def _apply_retry_policy(
     try:
         job.save()
     except RedisError:
-        logger.exception(
-            "Could not persist receipt retry policy"
+        logger.exception("Could not persist receipt retry policy")
+
+
+def receipt_work_horse_killed_handler(
+    job: Job, retpid: int, ret_val: int, rusage: object
+) -> None:
+    with log_context(**get_job_log_context(job)):
+        logger.error(
+            "Receipt work horse terminated unexpectedly pid=%s wait_status=%s",
+            retpid,
+            ret_val,
         )
+        error = WorkHorseInterruptedError("Receipt work horse terminated unexpectedly")
+        receipt_failure_callback(job, job.connection, type(error), error, None)

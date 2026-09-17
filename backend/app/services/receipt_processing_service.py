@@ -233,6 +233,38 @@ class ReceiptProcessingService:
 
         return SaveProcessingOutcome.SAVED
 
+    def mark_interrupted(self, receipt_id: UUID, processing_version: int) -> bool:
+        with self.session_factory.begin() as session:
+            repository = ReceiptProcessingRepository(session)
+            receipt = repository.get_for_update(receipt_id)
+
+            if receipt is None:
+                return False
+            if receipt.processing_version != processing_version:
+                return False
+            if receipt.processing_result_saved_at is not None:
+                return False
+            if receipt.status not in {
+                ReceiptStatus.UPLOADED,
+                ReceiptStatus.PREPROCESSING,
+                ReceiptStatus.OCR_PROCESSING,
+                ReceiptStatus.PARSING,
+            }:
+                return False
+
+            repository.set_processing_error(
+                receipt=receipt,
+                status=ReceiptStatus.FAILED,
+                error_code="processing_interrupted",
+                error_message=(
+                    "Обработка чека была прервана. "
+                    "Если автоматический повтор недоступен, "
+                    "запустите обработку повторно."
+                ),
+            )
+
+        return True
+
     def can_retry_processing(self, receipt_id: UUID, processing_version: int) -> bool:
         with self.session_factory.begin() as session:
             repository = ReceiptProcessingRepository(session)

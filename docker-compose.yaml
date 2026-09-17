@@ -87,6 +87,8 @@ services:
       minio-init:
         condition: service_completed_successfully
     restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 6m
 
 volumes:
   postgres_data:
