@@ -100,3 +100,10 @@ class ReceiptImageUnavailableError(ApplicationError):
 
 class ReceiptDeletionUnavailableError(ApplicationError):
     default_detail = "Receipt deletion is temporarily unavailable"
+
+
+class ReceiptProcessingConflictError(ConflictError):
+    default_detail = (
+        "Receipt already contains items. "
+        "Automatic processing cannot replace them without an explicit reprocess."
+    )
