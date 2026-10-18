@@ -8,6 +8,13 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ImageSettings(BaseSettings):
+    orientation_apply_model_rotation: bool = False
+    orientation_min_confidence: float = Field(
+        default=0.8, ge=0, le=1, allow_inf_nan=False
+    )
+    orientation_model_dir: Path = BACKEND_ROOT / "models" / "doc-orientation"
+    orientation_device: str = "cpu"
+    orientation_cpu_threads: int = Field(default=4, ge=1, le=64)
     url_ttl_seconds: int = Field(default=300, ge=1, le=900)
     max_upload_bytes: PositiveInt = 10 * 1024 * 1024
     max_pixels: PositiveInt = 20_000_000

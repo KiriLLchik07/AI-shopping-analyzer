@@ -2,6 +2,9 @@ from typing import BinaryIO, Protocol
 
 
 class ObjectStorage(Protocol):
+    def download(self, object_key: str, *, max_bytes: int) -> bytes:
+        pass
+
     def upload(self, object_key: str, file: BinaryIO, content_type: str) -> None:
         pass
 

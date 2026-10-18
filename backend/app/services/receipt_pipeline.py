@@ -1,9 +1,14 @@
 from abc import ABC, abstractmethod
 
+from backend.app.core.config import image_settings
+from backend.app.image_processing.factory import get_image_orientation_normalizer
+from backend.app.image_processing.orientation import ImageOrientationNormalizer
 from backend.app.schemas.processing import (
     ReceiptProcessingInput,
     ReceiptProcessingResult,
 )
+from backend.app.storage.factory import get_object_storage
+from backend.app.storage.interface import ObjectStorage
 
 
 class ReceiptPipeline(ABC):
@@ -21,8 +26,19 @@ class ReceiptPipeline(ABC):
 
 
 class UnconfiguredReceiptPipeline(ReceiptPipeline):
+    def __init__(
+        self,
+        object_storage: ObjectStorage,
+        orientation_normalizer: ImageOrientationNormalizer,
+    ) -> None:
+        self.object_storage = object_storage
+        self.orientation_normalizer = orientation_normalizer
+
     def preprocess(self, source: ReceiptProcessingInput) -> bytes:
-        raise NotImplementedError("Receipt image preprocessing is not implemented yet")
+        original = self.object_storage.download(
+            source.image_object_key, max_bytes=image_settings.max_upload_bytes
+        )
+        return self.orientation_normalizer.normalize(original)
 
     def recognize(self, image: bytes) -> str:
         raise NotImplementedError("Receipt OCR is not implemented yet")
@@ -32,4 +48,7 @@ class UnconfiguredReceiptPipeline(ReceiptPipeline):
 
 
 def get_receipt_pipeline() -> ReceiptPipeline:
-    return UnconfiguredReceiptPipeline()
+    return UnconfiguredReceiptPipeline(
+        object_storage=get_object_storage(),
+        orientation_normalizer=get_image_orientation_normalizer(),
+    )

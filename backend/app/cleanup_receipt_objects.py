@@ -1,14 +1,13 @@
 import argparse
 import logging
 
-from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
-
-from backend.app.api.dependencies.storage import get_object_storage
 from backend.app.db.session import SessionLocal
 from backend.app.models.object_cleanup_task import ObjectCleanupTask
 from backend.app.services.object_cleanup_service import cleanup_one
 from backend.app.storage.exception import ObjectStorageError
+from backend.app.storage.factory import get_object_storage
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 logger = logging.getLogger(__name__)
 

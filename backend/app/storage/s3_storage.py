@@ -16,6 +16,30 @@ class S3ObjectStorage(ObjectStorage):
             download_client if download_client is not None else client
         )
 
+    def download(self, object_key: str, *, max_bytes: int) -> bytes:
+        if max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        try:
+            response = self.client.get_object(Bucket=self.bucket, Key=object_key)
+            body = response["Body"]
+            try:
+                if response.get("ContentLength", 0) > max_bytes:
+                    raise ObjectStorageError("Object exceeds download size limit")
+                chunks = []
+                total = 0
+                while True:
+                    chunk = body.read(min(64 * 1024, max_bytes + 1 - total))
+                    if not chunk:
+                        return b"".join(chunks)
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total > max_bytes:
+                        raise ObjectStorageError("Object exceeds download size limit")
+            finally:
+                body.close()
+        except (BotoCoreError, ClientError) as error:
+            raise ObjectStorageError("Failed to download object") from error
+
     def upload(self, object_key: str, file: BinaryIO, content_type: str) -> None:
         try:
             self.client.upload_fileobj(

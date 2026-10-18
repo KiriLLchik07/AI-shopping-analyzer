@@ -2,22 +2,7 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import (
-    APIRouter,
-    Depends,
-    File,
-    HTTPException,
-    Path,
-    Query,
-    Response,
-    UploadFile,
-)
-from redis.exceptions import RedisError
-from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
-
 from backend.app.api.dependencies.auth import get_current_user
-from backend.app.api.dependencies.storage import get_object_storage
 from backend.app.core.config import image_settings
 from backend.app.db.session import SessionLocal, get_db
 from backend.app.models.user import User
@@ -39,8 +24,22 @@ from backend.app.schemas.response import (
 from backend.app.services.receipt_processing_service import ReceiptProcessingService
 from backend.app.services.receipt_service import ReceiptService
 from backend.app.services.receipt_upload_service import ReceiptUploadService
+from backend.app.storage.factory import get_object_storage
 from backend.app.storage.interface import ObjectStorage
 from backend.app.workers.queue import enqueue_receipt
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Path,
+    Query,
+    Response,
+    UploadFile,
+)
+from redis.exceptions import RedisError
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 router = APIRouter()
 
