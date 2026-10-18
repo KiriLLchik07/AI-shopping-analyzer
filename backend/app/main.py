@@ -23,6 +23,7 @@ app.include_router(category_router)
 
 register_exception_handlers(app)
 
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(
     request: Request,

@@ -2,6 +2,13 @@ import logging
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+from redis.exceptions import RedisError
+from rq import SimpleWorker
+from rq.job import Job, JobStatus
+from rq.scheduler import RQScheduler
+from rq.timeouts import TimerDeathPenalty
+
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.core.config import setting
 from backend.app.core.logging import LogContextFilter, get_correlation_id, log_context
@@ -14,12 +21,6 @@ from backend.app.schemas.request import ReceiptItemCreateRequest
 from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.workers import jobs
 from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
-from fastapi.testclient import TestClient
-from redis.exceptions import RedisError
-from rq import SimpleWorker
-from rq.job import Job, JobStatus
-from rq.scheduler import RQScheduler
-from rq.timeouts import TimerDeathPenalty
 
 pytestmark = pytest.mark.integration
 

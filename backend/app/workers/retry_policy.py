@@ -40,6 +40,7 @@ RETRYABLE_STORAGE_CODES = {
 class WorkHorseInterruptedError(RuntimeError):
     pass
 
+
 def is_interruption_error(error: BaseException) -> bool:
     return isinstance(error, (AbandonedJobError, WorkHorseInterruptedError))
 

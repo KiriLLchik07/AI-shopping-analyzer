@@ -69,10 +69,7 @@ class Settings(BaseSettings):
     def validate_receipt_retry_intervals(
         cls, value: tuple[int, ...]
     ) -> tuple[int, ...]:
-        if any(
-            current > following
-            for current, following in itertools.pairwise(value)
-        ):
+        if any(current > following for current, following in itertools.pairwise(value)):
             raise ValueError("RECEIPT_RETRY_INTERVALS_SECONDS must be non-decreasing")
 
         if any(interval > 86400 for interval in value):

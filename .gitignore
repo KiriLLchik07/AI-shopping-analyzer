@@ -19,3 +19,5 @@ backend/test.py
 /RESOURCES.md
 
 /docs
+
+backend/data/private

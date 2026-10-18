@@ -6,6 +6,10 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from rq import Worker
+
 from backend.app.core.logging import (
     LOG_FIELDS,
     LogContextFilter,
@@ -18,9 +22,6 @@ from backend.app.main import unhandled_exception_handler
 from backend.app.middleware.request_logging import RequestLoggingMiddleware
 from backend.app.workers.log_context import get_job_log_context
 from backend.app.workers.worker import CorrelationWorker
-from fastapi import FastAPI, HTTPException
-from fastapi.testclient import TestClient
-from rq import Worker
 
 
 def record():

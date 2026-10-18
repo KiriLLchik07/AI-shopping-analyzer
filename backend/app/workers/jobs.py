@@ -16,7 +16,6 @@ from backend.app.services.receipt_processing_service import (
 )
 from backend.app.workers.log_context import get_job_log_context
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -30,9 +29,7 @@ def process_receipt(
         context = get_job_log_context(job)
     else:
         context = {
-            "correlation_id": normalize_correlation_id(
-                get_correlation_id()
-            ),
+            "correlation_id": normalize_correlation_id(get_correlation_id()),
             "job_id": "manual",
             "receipt_id": receipt_id,
             "processing_version": processing_version,
@@ -60,9 +57,7 @@ def _process_receipt(
     )
 
     if source is None:
-        logger.info(
-            "Receipt job skipped: receipt missing, active or finished"
-        )
+        logger.info("Receipt job skipped: receipt missing, active or finished")
         return
 
     try:
@@ -77,9 +72,7 @@ def _process_receipt(
             new_status=ReceiptStatus.OCR_PROCESSING,
             processing_version=processing_version,
         ):
-            logger.info(
-                "Receipt job stopped before OCR: state changed"
-            )
+            logger.info("Receipt job stopped before OCR: state changed")
             return
 
         logger.info("Receipt OCR started")
@@ -91,9 +84,7 @@ def _process_receipt(
             new_status=ReceiptStatus.PARSING,
             processing_version=processing_version,
         ):
-            logger.info(
-                "Receipt job stopped before parsing: state changed"
-            )
+            logger.info("Receipt job stopped before parsing: state changed")
             return
 
         logger.info("Receipt parsing started")
@@ -126,8 +117,6 @@ def _process_receipt(
                 processing_version=processing_version,
             )
         except Exception:
-            logger.exception(
-                "Could not persist receipt processing error"
-            )
+            logger.exception("Could not persist receipt processing error")
 
         raise

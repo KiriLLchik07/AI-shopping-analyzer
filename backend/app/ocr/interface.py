@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 from backend.app.schemas.ocr import OcrResult
 
+
 class OcrProvider(ABC):
     @abstractmethod
     def recognize(self, image: bytes) -> OcrResult:
