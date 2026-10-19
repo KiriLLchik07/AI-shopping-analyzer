@@ -34,6 +34,26 @@ class ImageSettings(BaseSettings):
     )
 
 
+class OcrSettings(BaseSettings):
+    model_dir: Path = BACKEND_ROOT / "models" / "ocr"
+    detection_model_name: str = "PP-OCRv5_mobile_det"
+    recognition_model_name: str = "cyrillic_PP-OCRv5_mobile_rec"
+    model_files: tuple[str, ...] = (
+        "inference.json",
+        "inference.pdiparams",
+        "inference.yml",
+    )
+    device: str = "cpu"
+    cpu_threads: int = Field(default=4, ge=1, le=64)
+
+    model_config = SettingsConfigDict(
+        env_prefix="OCR_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
 class Settings(BaseSettings):
     database_url: str
     redis_url: str
@@ -87,3 +107,4 @@ class Settings(BaseSettings):
 
 setting = Settings()
 image_settings = ImageSettings()
+ocr_settings = OcrSettings()

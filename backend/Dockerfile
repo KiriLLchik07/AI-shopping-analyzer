@@ -21,6 +21,8 @@ RUN --mount=type=cache,target=/root/.cache/uv uv sync --project /backend --locke
 
 ENV IMAGE_ORIENTATION_DEVICE=cpu
 ENV IMAGE_ORIENTATION_MODEL_DIR=/models/doc-orientation
+ENV OCR_DEVICE=cpu
+ENV OCR_MODEL_DIR=/models/ocr
 ENV PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True
 
 CMD ["python", "-m", "backend.app.workers.worker"]

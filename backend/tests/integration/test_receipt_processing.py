@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,9 +14,11 @@ from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
 from backend.app.models.enums import ReceiptStatus
+from backend.app.ocr.exceptions import OcrConfigurationError, OcrRecognitionError
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
 )
+from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.orientation import OrientationDecision, OrientationReport
 from backend.app.schemas.processing import (
     ReceiptPreprocessingResult,
@@ -23,7 +26,10 @@ from backend.app.schemas.processing import (
     ReceiptProcessingResult,
 )
 from backend.app.schemas.request import ReceiptItemCreateRequest
-from backend.app.services.receipt_pipeline import ReceiptPipeline
+from backend.app.services.receipt_pipeline import (
+    ReceiptPipeline,
+    UnconfiguredReceiptPipeline,
+)
 from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
     SaveProcessingOutcome,
@@ -60,6 +66,53 @@ def make_result() -> ReceiptProcessingResult:
             ReceiptItemCreateRequest(raw_name="Bread", quantity=2),
         ),
     )
+
+
+def configured_ocr_pipeline(provider):
+    storage, normalizer = Mock(), Mock()
+    storage.download.return_value = b"stored-image"
+    normalizer.normalize_with_report.return_value = Mock(
+        image=b"normalized-image",
+        report=uncertain_orientation_report(),
+    )
+    return UnconfiguredReceiptPipeline(storage, normalizer, provider)
+
+
+def test_worker_uses_injected_ocr_provider(receipt_id, monkeypatch):
+    provider = Mock()
+    provider.recognize.return_value = OcrResult(
+        raw_text="МОЛОКО\nИТОГ 100.00", confidence=0.9
+    )
+    pipeline = configured_ocr_pipeline(provider)
+    # Only the parser is substituted: production parsing is a later stage.
+    parser = Mock(return_value=make_result())
+    monkeypatch.setattr(pipeline, "parse", parser)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
+    jobs.process_receipt(str(receipt_id))
+    provider.recognize.assert_called_once_with(b"normalized-image")
+    parser.assert_called_once_with("МОЛОКО\nИТОГ 100.00")
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.raw_ocr_text == "МОЛОКО\nИТОГ 100.00"
+        assert receipt.processing_result_saved_at is not None
+
+
+def test_provider_failure_marks_receipt_failed_before_parsing(receipt_id, monkeypatch):
+    provider = Mock()
+    provider.recognize.side_effect = OcrRecognitionError("PRIVATE SDK details")
+    pipeline = configured_ocr_pipeline(provider)
+    parser = Mock()
+    monkeypatch.setattr(pipeline, "parse", parser)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
+    with pytest.raises(OcrRecognitionError):
+        jobs.process_receipt(str(receipt_id))
+    parser.assert_not_called()
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_error_code == "ocr_failed"
+        assert "PRIVATE" not in receipt.processing_error_message
+        assert not item_ids(receipt_id)
 
 
 def item_ids(receipt_id: UUID) -> set[UUID]:
@@ -547,6 +600,8 @@ def test_parallel_result_saves_are_idempotent(receipt_id):
     ("error_type", "expected_code"),
     [
         (RuntimeError, "processing_failed"),
+        (OcrConfigurationError, "ocr_not_configured"),
+        (OcrRecognitionError, "ocr_failed"),
         (ObjectStorageError, "image_storage_unavailable"),
         (ReceiptProcessingConflictError, "processing_conflict"),
     ],

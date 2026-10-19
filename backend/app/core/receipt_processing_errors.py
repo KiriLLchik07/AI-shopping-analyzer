@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 from backend.app.core.exceptions import ReceiptProcessingConflictError
+from backend.app.ocr.exceptions import OcrConfigurationError, OcrRecognitionError
 from backend.app.storage.exception import ObjectStorageError
 
 
@@ -10,7 +11,11 @@ class SafeProcessingError(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     code: Literal[
-        "processing_conflict", "image_storage_unavailable", "processing_failed"
+        "processing_conflict",
+        "image_storage_unavailable",
+        "processing_failed",
+        "ocr_not_configured",
+        "ocr_failed",
     ]
 
     message: str
@@ -19,6 +24,16 @@ class SafeProcessingError(BaseModel):
 def get_safe_processing_error(
     error: Exception | None,
 ) -> SafeProcessingError:
+    if isinstance(error, OcrConfigurationError):
+        return SafeProcessingError(
+            code="ocr_not_configured",
+            message="Распознавание чеков временно недоступно. Попробуйте позже.",
+        )
+    if isinstance(error, OcrRecognitionError):
+        return SafeProcessingError(
+            code="ocr_failed",
+            message="Не удалось распознать текст чека. Попробуйте другое фото или повторите обработку.",
+        )
     if isinstance(error, ReceiptProcessingConflictError):
         return SafeProcessingError(
             code="processing_conflict",
