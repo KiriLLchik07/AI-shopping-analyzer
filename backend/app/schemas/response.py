@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.orientation import OrientationReport
@@ -53,6 +53,7 @@ class ReceiptResponse(BaseModel):
     fiscal_sign: str | None
     image_object_key: str
     raw_ocr_text: str | None
+    ocr_confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     orientation_report: OrientationReport | None = None
     status: ReceiptStatus
     processing_error_code: str | None = None

@@ -77,23 +77,18 @@ def _process_receipt(
             return
 
         logger.info("Receipt OCR started")
-        raw_text = pipeline.recognize(preprocessed.image)
+        ocr_result = pipeline.recognize_with_metadata(preprocessed.image)
 
-        if not service.advance_status(
+        if not service.save_ocr_result(
             receipt_id=parsed_receipt_id,
-            expected_status=ReceiptStatus.OCR_PROCESSING,
-            new_status=ReceiptStatus.PARSING,
+            result=ocr_result,
             processing_version=processing_version,
         ):
             logger.info("Receipt job stopped before parsing: state changed")
             return
 
         logger.info("Receipt parsing started")
-        result = pipeline.parse(raw_text)
-
-        result = result.model_copy(
-            update={"raw_ocr_text": raw_text},
-        )
+        result = pipeline.parse(ocr_result.raw_text)
 
         logger.info("Receipt result saving started")
 

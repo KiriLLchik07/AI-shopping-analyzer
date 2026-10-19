@@ -14,6 +14,7 @@ from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
 from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
@@ -70,6 +71,7 @@ def snapshot(receipt_id):
             "error": receipt.processing_error_code,
             "revision": receipt.items_revision,
             "text": receipt.raw_ocr_text,
+            "ocr_confidence": receipt.ocr_confidence,
             "saved_at": receipt.processing_result_saved_at,
             "items": {
                 item.receipt_item_id: item.raw_name
@@ -97,6 +99,14 @@ def test_endpoint_accepts_failed_receipt_and_commits_before_enqueue(
     receipt_id, _ = receipt_owner
     service = ReceiptProcessingService(SessionLocal)
     service.start_processing(receipt_id)
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+    )
+    assert service.save_ocr_result(
+        receipt_id, OcrResult(raw_text="previous", confidence=0.8)
+    )
     service.mark_failed(receipt_id)
     calls = []
 
@@ -105,6 +115,8 @@ def test_endpoint_accepts_failed_receipt_and_commits_before_enqueue(
         assert state["version"] == processing_version == 2
         assert state["status"] == ReceiptStatus.UPLOADED
         assert state["error"] is None
+        assert state["text"] is None
+        assert state["ocr_confidence"] is None
         calls.append((receipt_id, processing_version))
         return "test-job"
 
@@ -285,7 +297,9 @@ def test_failed_replacement_rolls_back_deletion(receipt_owner, monkeypatch):
     failed = snapshot(receipt_id)
     assert failed["status"] == ReceiptStatus.FAILED
     assert failed["items"] == original["items"]
-    assert failed["text"] == original["text"]
+    # Item replacement rolls back, while the new OCR result stays committed.
+    assert failed["text"] == "Replacement"
+    assert failed["ocr_confidence"] is None
     assert failed["revision"] == original["revision"]
     assert failed["saved_at"] is None
 

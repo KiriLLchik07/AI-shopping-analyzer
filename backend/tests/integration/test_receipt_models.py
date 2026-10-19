@@ -43,6 +43,7 @@ def test_minimal_receipt_has_expected_defaults(
     assert receipt.purchase_datetime is None
     assert receipt.total_amount is None
     assert receipt.raw_ocr_text is None
+    assert receipt.ocr_confidence is None
     assert receipt.created_at is not None
     assert receipt.updated_at is not None
 
@@ -253,6 +254,16 @@ def test_receipt_constraint_rejects_non_positive_total(
     with pytest.raises(IntegrityError):
         db_session.commit()
 
+    db_session.rollback()
+
+
+@pytest.mark.parametrize(
+    "confidence", [-0.1, 1.1, float("nan"), float("inf"), -float("inf")]
+)
+def test_receipt_ocr_confidence_range_is_enforced(db_session, confidence):
+    db_session.add(make_receipt(make_user(), ocr_confidence=confidence))
+    with pytest.raises(IntegrityError):
+        db_session.commit()
     db_session.rollback()
 
 

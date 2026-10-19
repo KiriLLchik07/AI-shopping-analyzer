@@ -17,6 +17,9 @@ from backend.app.storage.interface import ObjectStorage
 
 
 class ReceiptPipeline(ABC):
+    def recognize_with_metadata(self, image: bytes) -> OcrResult:
+        return OcrResult(raw_text=self.recognize(image))
+
     def preprocess_with_metadata(
         self, source: ReceiptProcessingInput
     ) -> ReceiptPreprocessingResult:
