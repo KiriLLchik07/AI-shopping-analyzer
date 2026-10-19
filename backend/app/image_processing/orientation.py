@@ -2,10 +2,15 @@ import logging
 import warnings
 from abc import ABC, abstractmethod
 from io import BytesIO
-from typing import Literal
 
 from PIL import Image, ImageOps, UnidentifiedImageError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
+
+from backend.app.schemas.orientation import (
+    OrientationDecision,
+    OrientationPrediction,
+    OrientationReport,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -14,17 +19,25 @@ class ImageOrientationError(RuntimeError):
     """Изображение не может быть декодировано, или невозможно определить его ориентацию."""
 
 
-class OrientationPrediction(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-    correction_angle: Literal[0, 90, 180, 270]
-    confidence: float = Field(ge=0, le=1, allow_inf_nan=False)
-
-
 class OrientationDetector(ABC):
     @abstractmethod
     def predict(self, image: Image.Image) -> OrientationPrediction:
         """Предсказывает корректирующий поворот для RGB-изображения, уже транспонированного по EXIF."""
         raise NotImplementedError
+
+
+class OrientationPolicy(ABC):
+    @abstractmethod
+    def decide(
+        self, image: Image.Image, detector: OrientationDetector, min_confidence: float
+    ) -> OrientationDecision:
+        raise NotImplementedError
+
+
+class ImageNormalizationResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    image: bytes
+    report: OrientationReport
 
 
 class ImageOrientationNormalizer:
@@ -36,6 +49,7 @@ class ImageOrientationNormalizer:
         max_input_bytes: int,
         max_pixels: int,
         apply_model_rotation: bool = True,
+        policy: OrientationPolicy | None = None,
     ) -> None:
         if not 0 <= min_confidence <= 1:
             raise ValueError("min_confidence must be between 0 and 1")
@@ -46,23 +60,38 @@ class ImageOrientationNormalizer:
         self.max_input_bytes = max_input_bytes
         self.max_pixels = max_pixels
         self.apply_model_rotation = apply_model_rotation
+        self.policy = policy
 
     def normalize(self, data: bytes) -> bytes:
+        return self.normalize_with_report(data).image
+
+    def normalize_with_report(self, data: bytes) -> ImageNormalizationResult:
         image, exif_corrected = self.decode(data)
         try:
-            prediction = self.detector.predict(image)
+            if self.policy is not None:
+                decision = self.policy.decide(image, self.detector, self.min_confidence)
+            else:
+                prediction = self.detector.predict(image)
+                accepted = prediction.confidence >= self.min_confidence
+                decision = OrientationDecision(
+                    accepted=accepted,
+                    correction_angle=prediction.correction_angle if accepted else None,
+                    reason="single_prediction" if accepted else "low_confidence",
+                    votes=(prediction,),
+                )
             angle = (
-                prediction.correction_angle
-                if self.apply_model_rotation
-                and prediction.confidence >= self.min_confidence
+                decision.correction_angle
+                if self.apply_model_rotation and decision.accepted
                 else 0
             )
-            if self.apply_model_rotation and prediction.correction_angle and angle == 0:
-                logger.warning(
-                    "Image rotation skipped confidence=%.4f threshold=%.4f",
-                    prediction.confidence,
-                    self.min_confidence,
-                )
+            needs_review = not decision.accepted or angle != decision.correction_angle
+            review_reason = (
+                decision.reason
+                if not decision.accepted
+                else "model_rotation_disabled"
+                if needs_review
+                else None
+            )
             rotations = {
                 90: Image.Transpose.ROTATE_90,
                 180: Image.Transpose.ROTATE_180,
@@ -78,16 +107,33 @@ class ImageOrientationNormalizer:
                 result = output.getvalue()
             logger.info(
                 "Image orientation normalized exif_corrected=%s predicted_angle=%s "
-                "applied_angle=%s confidence=%.4f width=%s height=%s model_rotation_enabled=%s",
+                "applied_angle=%s decision_reason=%s needs_review=%s "
+                "review_reason=%s votes=%s width=%s height=%s model_rotation_enabled=%s",
                 exif_corrected,
-                prediction.correction_angle,
+                decision.correction_angle,
                 angle,
-                prediction.confidence,
+                decision.reason,
+                needs_review,
+                review_reason,
+                [
+                    (vote.correction_angle, round(vote.confidence, 4))
+                    for vote in decision.votes
+                ],
                 image.width,
                 image.height,
                 self.apply_model_rotation,
             )
-            return result
+            return ImageNormalizationResult(
+                image=result,
+                report=OrientationReport(
+                    exif_corrected=exif_corrected,
+                    decision=decision,
+                    model_rotation_enabled=self.apply_model_rotation,
+                    applied_angle=angle,
+                    needs_review=needs_review,
+                    review_reason=review_reason,
+                ),
+            )
         finally:
             image.close()
 

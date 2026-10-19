@@ -64,19 +64,20 @@ def _process_receipt(
         pipeline = get_receipt_pipeline()
 
         logger.info("Receipt preprocessing started")
-        image = pipeline.preprocess(source)
+        preprocessed = pipeline.preprocess_with_metadata(source)
 
         if not service.advance_status(
             receipt_id=parsed_receipt_id,
             expected_status=ReceiptStatus.PREPROCESSING,
             new_status=ReceiptStatus.OCR_PROCESSING,
             processing_version=processing_version,
+            orientation_report=preprocessed.orientation_report,
         ):
             logger.info("Receipt job stopped before OCR: state changed")
             return
 
         logger.info("Receipt OCR started")
-        raw_text = pipeline.recognize(image)
+        raw_text = pipeline.recognize(preprocessed.image)
 
         if not service.advance_status(
             receipt_id=parsed_receipt_id,

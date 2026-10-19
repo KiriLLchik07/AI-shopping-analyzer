@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 
 from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.orientation import OrientationReport
 
 
 class UserResponse(BaseModel):
@@ -52,6 +53,7 @@ class ReceiptResponse(BaseModel):
     fiscal_sign: str | None
     image_object_key: str
     raw_ocr_text: str | None
+    orientation_report: OrientationReport | None = None
     status: ReceiptStatus
     processing_error_code: str | None = None
     processing_error_message: str | None = None

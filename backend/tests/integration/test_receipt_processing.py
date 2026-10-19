@@ -16,7 +16,9 @@ from backend.app.models.enums import ReceiptStatus
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
 )
+from backend.app.schemas.orientation import OrientationDecision, OrientationReport
 from backend.app.schemas.processing import (
+    ReceiptPreprocessingResult,
     ReceiptProcessingInput,
     ReceiptProcessingResult,
 )
@@ -80,6 +82,120 @@ class StubPipeline(ReceiptPipeline):
 
     def parse(self, raw_text: str) -> ReceiptProcessingResult:
         return make_result()
+
+
+def uncertain_orientation_report():
+    return OrientationReport(
+        exif_corrected=False,
+        decision=OrientationDecision(
+            accepted=False,
+            correction_angle=None,
+            reason="confident_disagreement",
+            votes=(),
+        ),
+        model_rotation_enabled=True,
+        applied_angle=0,
+        needs_review=True,
+        review_reason="confident_disagreement",
+    )
+
+
+def test_orientation_report_is_saved_before_ocr_failure_and_visible_in_api(
+    receipt_id, monkeypatch, client
+):
+    report = uncertain_orientation_report()
+
+    class Pipeline(StubPipeline):
+        def preprocess_with_metadata(self, source):
+            return ReceiptPreprocessingResult(image=b"image", orientation_report=report)
+
+        def recognize(self, image):
+            with SessionLocal() as session:
+                receipt = session.get(Receipt, receipt_id)
+                assert receipt.status == ReceiptStatus.OCR_PROCESSING
+                assert receipt.orientation_report == report.model_dump(mode="json")
+            raise ValueError("OCR unavailable")
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", Pipeline)
+    with pytest.raises(ValueError, match="OCR unavailable"):
+        jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.FAILED
+        owner = session.get(User, receipt.receipt_user_id)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: owner)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    assert response.json()["orientation_report"] == report.model_dump(mode="json")
+
+
+def test_uncertain_orientation_continues_processing_and_duplicate_job_keeps_report(
+    receipt_id, monkeypatch
+):
+    report = uncertain_orientation_report()
+    calls = []
+
+    class Pipeline(StubPipeline):
+        def preprocess_with_metadata(self, source):
+            calls.append(True)
+            return ReceiptPreprocessingResult(image=b"image", orientation_report=report)
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", Pipeline)
+    jobs.process_receipt(str(receipt_id))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.orientation_report == report.model_dump(mode="json")
+    assert calls == [True]
+
+
+def test_reprocess_clears_orientation_and_stale_job_cannot_restore_it(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    report = uncertain_orientation_report()
+    service.start_processing(receipt_id)
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        orientation_report=report,
+    )
+    service.mark_failed(receipt_id)
+    with SessionLocal() as session:
+        owner_id = session.get(Receipt, receipt_id).receipt_user_id
+    ticket = service.prepare_process(receipt_id, owner_id, replace_items=False)
+    service.start_processing(receipt_id, ticket.processing_version)
+    assert not service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        processing_version=1,
+        orientation_report=report,
+    )
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).orientation_report is None
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        processing_version=ticket.processing_version,
+        orientation_report=report,
+    )
+
+
+def test_retry_clears_previous_attempt_orientation_report(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    service.start_processing(receipt_id)
+    service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        orientation_report=uncertain_orientation_report(),
+    )
+    service.mark_failed(receipt_id)
+    assert service.start_processing(receipt_id) is not None
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).orientation_report is None
 
 
 def receipt_status(receipt_id: UUID) -> ReceiptStatus:

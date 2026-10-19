@@ -7,10 +7,12 @@ from botocore.exceptions import EndpointConnectionError
 from PIL import Image, ImageChops
 
 from backend.app.image_processing.orientation import (
+    ImageNormalizationResult,
     ImageOrientationError,
     ImageOrientationNormalizer,
     OrientationPrediction,
 )
+from backend.app.schemas.orientation import OrientationDecision, OrientationReport
 from backend.app.schemas.processing import ReceiptProcessingInput
 from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
 from backend.app.storage.exception import ObjectStorageError
@@ -142,12 +144,27 @@ def test_transparency_becomes_white():
 def test_pipeline_downloads_then_normalizes():
     storage, service = Mock(), Mock()
     storage.download.return_value = b"original"
-    service.normalize.return_value = b"normalized"
+    report = OrientationReport(
+        exif_corrected=False,
+        decision=OrientationDecision(
+            accepted=False,
+            correction_angle=None,
+            reason="confident_disagreement",
+            votes=(),
+        ),
+        model_rotation_enabled=True,
+        applied_angle=0,
+        needs_review=True,
+        review_reason="confident_disagreement",
+    )
+    service.normalize_with_report.return_value = ImageNormalizationResult(
+        image=b"normalized", report=report
+    )
     pipeline = UnconfiguredReceiptPipeline(storage, service)
     source = ReceiptProcessingInput(receipt_id=uuid4(), image_object_key="receipt.jpg")
     assert pipeline.preprocess(source) == b"normalized"
     assert storage.download.call_args.args == ("receipt.jpg",)
-    service.normalize.assert_called_once_with(b"original")
+    service.normalize_with_report.assert_called_once_with(b"original")
 
 
 @pytest.mark.parametrize("declared_size", [None, 10])

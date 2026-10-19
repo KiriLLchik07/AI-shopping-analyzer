@@ -18,6 +18,7 @@ from backend.app.models import Receipt, ReceiptItem, User
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.schemas.request import ReceiptItemCreateRequest
+from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.services.receipt_processing_service import ReceiptProcessingService
 from backend.app.workers import jobs, retry_policy
 from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
@@ -229,7 +230,7 @@ def test_recovered_job_finishes_without_duplicate_items(receipt_id, monkeypatch)
     expire(execution, registry)
     registry.cleanup()
 
-    class Pipeline:
+    class Pipeline(ReceiptPipeline):
         def preprocess(self, source):
             return b"image"
 

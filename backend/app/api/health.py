@@ -1,5 +1,7 @@
 from typing import Annotated
 
+from fastapi import APIRouter, Depends, Response, status
+
 from backend.app.schemas.response import (
     HealthLiveResponse,
     HealthReadyResponse,
@@ -8,7 +10,6 @@ from backend.app.schemas.response import (
 from backend.app.services.health_service import HealthService
 from backend.app.storage.factory import get_object_storage
 from backend.app.storage.interface import ObjectStorage
-from fastapi import APIRouter, Depends, Response, status
 
 router = APIRouter()
 

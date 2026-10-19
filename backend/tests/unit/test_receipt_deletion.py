@@ -3,6 +3,12 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import sessionmaker
+
 from backend.app.api import receipts as receipts_api
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.api.exception_handlers import register_exception_handlers
@@ -17,11 +23,6 @@ from backend.app.services.object_cleanup_service import cleanup_one
 from backend.app.services.receipt_service import ReceiptService
 from backend.app.storage.exception import ObjectStorageError
 from backend.app.storage.factory import get_object_storage
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import sessionmaker
 
 
 @pytest.fixture

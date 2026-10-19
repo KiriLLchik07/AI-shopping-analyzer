@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import Receipt, ReceiptItem
 from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.request import ReceiptItemCreateRequest
 
 
@@ -40,10 +41,19 @@ class ReceiptProcessingRepository:
         )
 
     def set_status(
-        self, receipt: Receipt, status: ReceiptStatus, clear_error: bool = False
+        self,
+        receipt: Receipt,
+        status: ReceiptStatus,
+        clear_error: bool = False,
+        orientation_report: OrientationReport | None = None,
+        clear_orientation_report: bool = False,
     ) -> None:
 
         receipt.status = status
+        if clear_orientation_report:
+            receipt.orientation_report = None
+        elif orientation_report is not None:
+            receipt.orientation_report = orientation_report.model_dump(mode="json")
         if clear_error:
             receipt.processing_error_code = None
             receipt.processing_error_message = None
@@ -70,6 +80,7 @@ class ReceiptProcessingRepository:
         receipt.processing_replace_items = replace_items
 
         receipt.processing_result_saved_at = None
+        receipt.orientation_report = None
         receipt.processing_error_code = None
         receipt.processing_error_message = None
         receipt.status = ReceiptStatus.UPLOADED

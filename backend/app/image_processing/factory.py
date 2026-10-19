@@ -3,6 +3,7 @@ from functools import lru_cache
 from backend.app.core.config import image_settings
 from backend.app.image_processing.orientation import ImageOrientationNormalizer
 from backend.app.image_processing.paddle_orientation import PaddleOrientationDetector
+from backend.app.image_processing.regional_orientation import RegionalOrientationPolicy
 
 
 @lru_cache(maxsize=1)
@@ -17,4 +18,5 @@ def get_image_orientation_normalizer() -> ImageOrientationNormalizer:
         max_input_bytes=image_settings.max_upload_bytes,
         max_pixels=image_settings.max_pixels,
         apply_model_rotation=image_settings.orientation_apply_model_rotation,
+        policy=RegionalOrientationPolicy(),
     )

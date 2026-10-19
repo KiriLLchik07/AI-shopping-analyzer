@@ -14,6 +14,7 @@ from backend.app.models.enums import ReceiptStatus
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
 )
+from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.processing import (
     ReceiptProcessingInput,
     ReceiptProcessingResult,
@@ -113,7 +114,10 @@ class ReceiptProcessingService:
             )
 
             repository.set_status(
-                receipt, ReceiptStatus.PREPROCESSING, clear_error=True
+                receipt,
+                ReceiptStatus.PREPROCESSING,
+                clear_error=True,
+                clear_orientation_report=True,
             )
 
         return source
@@ -124,6 +128,7 @@ class ReceiptProcessingService:
         expected_status: ReceiptStatus,
         new_status: ReceiptStatus,
         processing_version: int = 1,
+        orientation_report: OrientationReport | None = None,
     ) -> bool:
 
         allowed_transitions = {
@@ -136,6 +141,12 @@ class ReceiptProcessingService:
                 f"Unsupported processing transition: "
                 f"{expected_status.value} -> {new_status.value}"
             )
+
+        if (
+            orientation_report is not None
+            and expected_status != ReceiptStatus.PREPROCESSING
+        ):
+            raise ValueError("Orientation report can only be saved after preprocessing")
 
         with self.session_factory.begin() as session:
             repository = ReceiptProcessingRepository(session)
@@ -153,7 +164,9 @@ class ReceiptProcessingService:
             if receipt.status != expected_status:
                 return False
 
-            repository.set_status(receipt, new_status)
+            repository.set_status(
+                receipt, new_status, orientation_report=orientation_report
+            )
 
         return True
 
