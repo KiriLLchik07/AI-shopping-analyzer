@@ -8,7 +8,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from backend.app.db.base import Base
 
 if TYPE_CHECKING:
+    from backend.app.models.llm_report import LlmReport
     from backend.app.models.receipt import Receipt
+    from backend.app.models.user_rule import UserRule
 
 
 class User(Base):
@@ -49,4 +51,10 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,
+    )
+    llm_reports: Mapped[list["LlmReport"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    )
+    rules: Mapped[list["UserRule"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
     )
