@@ -13,7 +13,7 @@ from backend.app.main import app
 from backend.app.models import Receipt, User
 from backend.app.models.enums import ReceiptStatus
 from backend.app.parsing.receipt_parser import ReceiptParser
-from backend.app.schemas.ocr import OcrResult
+from backend.app.schemas.ocr import OcrFragment, OcrResult
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.schemas.request import ReceiptItemCreateRequest
 from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
@@ -557,3 +557,92 @@ def test_manual_normalized_name_survives_duplicate_job_and_requires_replacement_
     assert len(items) == 1
     assert items[0]["raw_name"] == "МОЛОКО"
     assert items[0]["normalized_name"] == "молоко"
+
+
+def confidence_pipeline(parts):
+    result = OcrResult(
+        raw_text="\n".join(text for text, _ in parts),
+        confidence=0.99,
+        fragments=tuple(
+            OcrFragment(text=text, confidence=score) for text, score in parts
+        ),
+    )
+    configured = pipeline(text=result.raw_text)
+    configured.ocr_provider.recognize.return_value = result
+    return configured
+
+
+def test_worker_stores_distinct_item_confidences_and_exposes_them_in_api(
+    receipt_owner, client, monkeypatch
+):
+    receipt_id, user = receipt_owner
+    configured = confidence_pipeline(
+        [
+            ("Молоко", 0.96),
+            ("100.00*1шт=100.00", 0.91),
+            ("Молоко", 0.67),
+            ("100.00*1шт=100.00", 0.88),
+            ("ИТОГ 200.00", 0.05),
+        ]
+    )
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: configured)
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.ocr_confidence == 0.99
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert sorted(item.confidence for item in receipt.items) == [0.67, 0.91]
+        assert receipt.parsing_report["item_confidence_method"] == "min_ocr_fragment_v1"
+        original_ids = {item.receipt_item_id for item in receipt.items}
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert {item.receipt_item_id for item in receipt.items} == original_ids
+        assert sorted(item.confidence for item in receipt.items) == [0.67, 0.91]
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    assert sorted(item["confidence"] for item in response.json()["items"]) == [
+        0.67,
+        0.91,
+    ]
+
+
+@pytest.mark.parametrize("score", [0.0, 1.0])
+def test_worker_preserves_item_confidence_boundaries(receipt_owner, monkeypatch, score):
+    receipt_id, _ = receipt_owner
+    configured = confidence_pipeline(
+        [("Товар 100.00*1шт=100.00", score), ("ИТОГ 100.00", 0.6)]
+    )
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: configured)
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).items[0].confidence == score
+
+
+def test_reprocessing_replaces_confidence_only_after_consent(
+    receipt_owner, monkeypatch
+):
+    from backend.app.core.exceptions import ConflictError
+
+    receipt_id, user = receipt_owner
+    configured = confidence_pipeline(
+        [("Товар 100.00*1шт=100.00", 0.9), ("ИТОГ 100.00", 0.99)]
+    )
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: configured)
+    jobs.process_receipt(str(receipt_id))
+    service = ReceiptProcessingService(SessionLocal)
+    with pytest.raises(ConflictError):
+        service.prepare_process(receipt_id, user.user_id, replace_items=False)
+    ticket = service.prepare_process(receipt_id, user.user_id, replace_items=True)
+    configured = confidence_pipeline(
+        [("Товар 100.00*1шт=100.00", 0.72), ("ИТОГ 100.00", 0.99)]
+    )
+    jobs.process_receipt(str(receipt_id), ticket.processing_version)
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert len(receipt.items) == 1
+        assert receipt.items[0].confidence == 0.72
+    jobs.process_receipt(str(receipt_id), ticket.processing_version - 1)
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).items[0].confidence == 0.72

@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,6 +52,7 @@ class ReceiptParsingReport(BaseModel):
     total_amount: Amount | None = None
     warnings: tuple[NonBlankText, ...] = ()
     totals_check: ReceiptTotalsCheck | None = None
+    item_confidence_method: Literal["min_ocr_fragment_v1"] | None = None
 
 
 class ReceiptParsingResult(ReceiptParsingReport):

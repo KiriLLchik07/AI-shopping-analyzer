@@ -3,10 +3,11 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.parsing import ReceiptParsingReport
-from pydantic import BaseModel, ConfigDict, Field
 
 
 class UserResponse(BaseModel):
@@ -87,7 +88,13 @@ class ReceiptItemResponse(BaseModel):
     unit_price: Decimal | None
     total_price: Decimal | None
     discount_amount: Decimal
-    confidence: float | None
+    confidence: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        allow_inf_nan=False,
+        description="Минимальная оценка OCR-фрагментов позиции; не вероятность правильного парсинга.",
+    )
     is_impulse_candidate: bool
     created_at: datetime
     updated_at: datetime

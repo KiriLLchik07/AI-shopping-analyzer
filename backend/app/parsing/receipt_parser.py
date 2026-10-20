@@ -1,4 +1,5 @@
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -47,12 +48,16 @@ class ReceiptParser:
         self.timezone = ZoneInfo(timezone) if timezone is not None else None
         self.total_tolerance = total_tolerance
 
-    def parse(self, raw_text: str) -> ReceiptParsingResult:
+    def parse(
+        self, raw_text: str, *, line_confidences: Mapping[int, float] | None = None
+    ) -> ReceiptParsingResult:
         lines = _lines(raw_text)
         store, store_warnings = self._store(lines)
         purchased_at, date_warnings = self._datetime(lines)
         total, total_warnings = self._total(lines)
-        items, item_warnings = ReceiptItemParser().parse(raw_text)
+        items, item_warnings = ReceiptItemParser().parse(
+            raw_text, line_confidences=line_confidences
+        )
         totals_check, check_warnings = check_receipt_totals(
             items, total, tolerance=self.total_tolerance
         )
@@ -70,6 +75,7 @@ class ReceiptParser:
                 *check_warnings,
             ),
             totals_check=totals_check,
+            item_confidence_method="min_ocr_fragment_v1" if line_confidences else None,
         )
 
     def _store(self, lines: list[str]) -> tuple[str | None, tuple[str, ...]]:

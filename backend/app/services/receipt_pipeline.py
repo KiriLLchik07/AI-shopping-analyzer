@@ -6,9 +6,11 @@ from backend.app.image_processing.orientation import ImageOrientationNormalizer
 from backend.app.ocr.exceptions import OcrConfigurationError
 from backend.app.ocr.factory import get_ocr_provider
 from backend.app.ocr.interface import OcrProvider
+from backend.app.parsing.confidence import ocr_line_confidences
 from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.ocr import OcrResult
+from backend.app.schemas.parsing import ReceiptParsingResult
 from backend.app.schemas.processing import (
     ReceiptPreprocessingResult,
     ReceiptProcessingInput,
@@ -19,6 +21,9 @@ from backend.app.storage.interface import ObjectStorage
 
 
 class ReceiptPipeline(ABC):
+    def parse_with_metadata(self, result: OcrResult) -> ReceiptProcessingResult:
+        return self.parse(result.raw_text)
+
     def recognize_with_metadata(self, image: bytes) -> OcrResult:
         return OcrResult(raw_text=self.recognize(image))
 
@@ -77,8 +82,20 @@ class UnconfiguredReceiptPipeline(ReceiptPipeline):
 
     def parse(self, raw_text: str) -> ReceiptProcessingResult:
         parsed = self.parser.parse(raw_text)
+        return self._processing_result(parsed)
+
+    def parse_with_metadata(self, result: OcrResult) -> ReceiptProcessingResult:
+        if not result.fragments:
+            return self.parse(result.raw_text)
+        parsed = self.parser.parse(
+            result.raw_text, line_confidences=ocr_line_confidences(result)
+        )
+        return self._processing_result(parsed)
+
+    @staticmethod
+    def _processing_result(parsed: ReceiptParsingResult) -> ReceiptProcessingResult:
         return ReceiptProcessingResult(
-            raw_ocr_text=raw_text,
+            raw_ocr_text=parsed.raw_ocr_text,
             items=tuple(
                 ReceiptItemData.model_validate(item.model_dump(exclude_none=True))
                 for item in parsed.items

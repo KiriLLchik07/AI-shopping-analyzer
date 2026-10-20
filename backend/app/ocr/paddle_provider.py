@@ -11,7 +11,7 @@ from PIL import Image
 
 from backend.app.ocr.exceptions import OcrConfigurationError, OcrRecognitionError
 from backend.app.ocr.interface import OcrProvider
-from backend.app.schemas.ocr import OcrResult
+from backend.app.schemas.ocr import OcrFragment, OcrResult
 
 if TYPE_CHECKING:
     from backend.app.core.config import OcrSettings
@@ -109,6 +109,9 @@ class PaddleOcrProvider(OcrProvider):
                     retained.append((text.strip(), score))
             result = OcrResult(
                 raw_text="\n".join(text for text, _ in retained),
+                fragments=tuple(
+                    OcrFragment(text=text, confidence=score) for text, score in retained
+                ),
                 confidence=sum(score for _, score in retained) / len(retained)
                 if retained
                 else None,

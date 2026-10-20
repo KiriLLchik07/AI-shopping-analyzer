@@ -1,6 +1,8 @@
 import re
+from collections.abc import Mapping
 from decimal import Decimal
 
+from backend.app.parsing.confidence import item_ocr_confidence
 from backend.app.parsing.formats import (
     CURRENCY,
     DATE,
@@ -60,12 +62,13 @@ NUMERIC_FRAGMENT = re.compile(
 
 class ReceiptItemParser:
     def parse(
-        self, raw_text: str
+        self, raw_text: str, *, line_confidences: Mapping[int, float] | None = None
     ) -> tuple[tuple[ParsedReceiptItem, ...], tuple[str, ...]]:
         items = []
         warnings = []
         names: list[str] = []
         numbers: list[str] = []
+        source_lines: set[int] = set()
         table = False
         header = False
         ambiguous_table = False
@@ -83,6 +86,7 @@ class ReceiptItemParser:
                 ambiguous_table = False
                 names.clear()
                 numbers.clear()
+                source_lines.clear()
                 continue
             if structural.startswith("ЦЕНА"):
                 header = True
@@ -124,6 +128,7 @@ class ReceiptItemParser:
             if self._ignored(row.upper().translate(HEADER_TRANSLATION)):
                 names.clear()
                 numbers.clear()
+                source_lines.clear()
                 continue
             if ambiguous_table:
                 continue
@@ -136,26 +141,34 @@ class ReceiptItemParser:
                 )
                 if prefix and not numeric_prefix:
                     names.append(prefix)
-                item, item_warnings = self._item(names, match, number)
+                source_lines.add(number)
+                item, item_warnings = self._item(
+                    names, match, number, source_lines, line_confidences
+                )
                 warnings.extend(item_warnings)
                 if item is not None:
                     items.append(item)
                 names.clear()
                 numbers.clear()
+                source_lines.clear()
                 header = False
             elif partial := CALCULATION_START.search(combined):
                 prefix = combined[: partial.start()].strip()
                 if prefix:
                     names.append(prefix)
                 numbers = [partial.group()]
+                source_lines.add(number)
             elif names and re.search(rf"[0-9].*{MULTIPLY}", row, re.IGNORECASE):
                 numbers.append(row)
+                source_lines.add(number)
             elif (table or names) and NUMERIC_FRAGMENT.fullmatch(row):
                 numbers.append(row)
+                source_lines.add(number)
                 if len(numbers) > 6:
                     warnings.append(f"Строка {number}: числовые колонки не разобраны.")
                     names.clear()
                     numbers.clear()
+                    source_lines.clear()
                     ambiguous_table = table
             elif re.search(r"[а-яёa-z]", row, re.IGNORECASE):
                 if numbers:
@@ -164,13 +177,16 @@ class ReceiptItemParser:
                     )
                     names.clear()
                     numbers.clear()
+                    source_lines.clear()
                     ambiguous_table = table
                     if table:
                         continue
                 names.append(row)
+                source_lines.add(number)
             else:
                 names.clear()
                 numbers.clear()
+                source_lines.clear()
         if numbers:
             if (
                 table
@@ -183,7 +199,9 @@ class ReceiptItemParser:
             ):
                 total_match = TOTAL_ONLY.fullmatch("=" + numbers[-1])
                 assert total_match is not None
-                item, item_warnings = self._item(names, total_match, number)
+                item, item_warnings = self._item(
+                    names, total_match, number, source_lines, line_confidences
+                )
                 if item is not None:
                     items.append(item)
                 warnings.extend(item_warnings)
@@ -218,7 +236,11 @@ class ReceiptItemParser:
 
     @staticmethod
     def _item(
-        names: list[str], match: re.Match, line_number: int
+        names: list[str],
+        match: re.Match,
+        line_number: int,
+        source_lines: set[int],
+        line_confidences: Mapping[int, float] | None,
     ) -> tuple[ParsedReceiptItem | None, list[str]]:
         warnings = []
         name = "\n".join(names)
@@ -267,4 +289,5 @@ class ReceiptItemParser:
             unit=unit,
             unit_price=price,
             total_price=total,
+            confidence=item_ocr_confidence(source_lines, line_confidences),
         ), warnings
