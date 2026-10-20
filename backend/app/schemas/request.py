@@ -1,7 +1,16 @@
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from typing import Self
 from uuid import UUID
+
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.items import ItemAmount, ItemQuantity
@@ -10,7 +19,6 @@ from backend.app.schemas.validation import (
     NormalizedEmail,
     RegistrationPassword,
 )
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class UserLoginRequest(BaseModel):
@@ -57,12 +65,19 @@ class ReceiptUpdateRequest(BaseModel):
 
     store_name: str | None = Field(default=None, min_length=1, max_length=100)
     store_inn: str | None = Field(default=None, max_length=12)
-    purchase_datetime: datetime | None = None
-    total_amount: Decimal | None = Field(default=None, gt=0)
+    purchase_datetime: AwareDatetime | None = None
+    total_amount: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
+    )
     payment_type: str | None = Field(default=None, max_length=30)
     fiscal_drive_number: str | None = Field(default=None, max_length=16)
     fiscal_document_number: str | None = None
     fiscal_sign: str | None = None
+
+    @field_validator("store_name", mode="before")
+    @classmethod
+    def strip_store_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_not_empty(self) -> Self:
@@ -76,32 +91,54 @@ class ReceiptItemCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     raw_name: str = Field(min_length=1, max_length=256)
-    normalized_name: str | None = Field(default=None, max_length=256)
+    normalized_name: str | None = Field(default=None, min_length=1, max_length=256)
     category_id: UUID | None = None
     quantity: ItemQuantity
     unit: str | None = Field(default=None, max_length=100)
-    weight: Decimal | None = Field(default=None, gt=0)
-    unit_price: ItemAmount | None = None
-    total_price: ItemAmount | None = None
-    discount_amount: Decimal = Field(default=Decimal("0.00"), ge=0)
+    weight: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
+    )
+    unit_price: ItemAmount | None = Field(
+        default=None, description="Конечная цена за единицу после скидок."
+    )
+    total_price: ItemAmount | None = Field(
+        default=None, description="Конечная сумма позиции после скидок."
+    )
+    discount_amount: ItemAmount = Decimal("0.00")
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool = False
+
+    @field_validator("raw_name", "normalized_name", mode="before")
+    @classmethod
+    def strip_item_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class ReceiptItemUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     raw_name: str | None = Field(default=None, min_length=1, max_length=256)
-    normalized_name: str | None = Field(default=None, max_length=256)
+    normalized_name: str | None = Field(default=None, min_length=1, max_length=256)
     category_id: UUID | None = None
     quantity: ItemQuantity | None = None
     unit: str | None = Field(default=None, max_length=100)
-    weight: Decimal | None = Field(default=None, gt=0)
-    unit_price: ItemAmount | None = None
-    total_price: ItemAmount | None = None
-    discount_amount: Decimal | None = Field(default=None, ge=0)
+    weight: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
+    )
+    unit_price: ItemAmount | None = Field(
+        default=None, description="Конечная цена за единицу после скидок."
+    )
+    total_price: ItemAmount | None = Field(
+        default=None, description="Конечная сумма позиции после скидок."
+    )
+    discount_amount: ItemAmount | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool | None = None
+
+    @field_validator("raw_name", "normalized_name", mode="before")
+    @classmethod
+    def strip_item_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_update(self) -> Self:

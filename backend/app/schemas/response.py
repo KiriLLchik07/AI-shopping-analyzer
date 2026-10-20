@@ -58,6 +58,7 @@ class ReceiptResponse(BaseModel):
     orientation_report: OrientationReport | None = None
     parsing_report: ReceiptParsingReport | None = None
     status: ReceiptStatus
+    confirmed_at: datetime | None = None
     processing_error_code: str | None = None
     processing_error_message: str | None = None
     processing_version: int

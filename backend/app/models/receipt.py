@@ -78,6 +78,7 @@ class Receipt(Base):
     processing_result_saved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     processing_error_code: Mapped[str | None] = mapped_column(String(64))
     processing_error_message: Mapped[str | None] = mapped_column(String(512))
@@ -163,6 +164,7 @@ class ReceiptItem(Base):
         CheckConstraint("weight > 0", "weight_check"),
         CheckConstraint("unit_price >= 0", "unit_price_check"),
         CheckConstraint("total_price >= 0", "total_price_check"),
+        CheckConstraint("discount_amount >= 0", "discount_amount_check"),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"
         ),
