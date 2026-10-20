@@ -236,7 +236,7 @@ def test_worker_saves_fixture_items_and_duplicate_job_is_idempotent(
             assert bananas.quantity == Decimal("0.432")
             assert bananas.unit_price == Decimal("169.99")
             assert bananas.total_price == Decimal("73.44")
-            assert bananas.unit == "КГ"
+            assert bananas.unit == "кг"
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         assert {
@@ -439,3 +439,48 @@ def test_api_accepts_report_saved_before_totals_check_was_added(
     response = client.get(f"/api/receipts/{receipt_id}")
     assert response.status_code == 200
     assert response.json()["parsing_report"]["totals_check"] is None
+
+
+@pytest.mark.parametrize(
+    ("raw_unit", "unit"),
+    [
+        ("ШТ.", "шт"),
+        ("килограмма", "кг"),
+        ("ГР.", "г"),
+        ("литра", "л"),
+        ("миллилитров", "мл"),
+        ("упаковки", "упак"),
+        ("WT.", None),
+        ("Kr", None),
+    ],
+)
+def test_worker_persists_normalized_units_and_api_preserves_values(
+    receipt_owner, client, monkeypatch, raw_unit, unit
+):
+    receipt_id, user = receipt_owner
+    raw = f"Молоко 900 мл 100.00*2{raw_unit}=200.00\nИТОГ 200.00"
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=raw))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.raw_ocr_text == raw
+        item = receipt.items[0]
+        assert item.raw_name == "Молоко 900 мл"
+        assert item.unit == unit
+        assert item.quantity == 2
+        assert item.unit_price == Decimal("100.00")
+        assert item.total_price == Decimal("200.00")
+        assert receipt.parsing_report["totals_check"]["status"] == "matched"
+        if unit is None:
+            assert any(
+                raw_unit in warning and "единиц" in warning
+                for warning in receipt.parsing_report["warnings"]
+            )
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["unit"] == unit
+    assert Decimal(item["quantity"]) == 2
+    assert Decimal(item["unit_price"]) == Decimal("100.00")

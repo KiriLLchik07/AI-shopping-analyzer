@@ -8,10 +8,11 @@ from backend.app.parsing.formats import (
     decimal_number,
     money_value,
 )
+from backend.app.parsing.units import UNIT_PATTERN, normalize_unit
 from backend.app.schemas.parsing import ParsedReceiptItem
 
 NUMBER = r"-?[0-9]+(?:[.,][0-9]+)?"
-UNIT = r"(?:шт\.?|кг\.?|гр\.?|г|мл|л|уп(?:ак)?\.?|WT\.?|Kr)"
+UNIT = rf"(?:{UNIT_PATTERN})"
 MULTIPLY = r"[*×xх]"
 CALCULATION = re.compile(
     rf"(?<![\w.,+-])(?P<price>{PRICE})\s*{MULTIPLY}\s*"
@@ -245,10 +246,17 @@ class ReceiptItemParser:
             warnings.append(
                 f"Строка {line_number}: количество, цена или сумма позиции требуют проверки."
             )
+        raw_unit = groups.get("unit")
+        unit = normalize_unit(raw_unit)
+        if raw_unit is not None and unit is None:
+            warnings.append(
+                f"Строка {line_number}: единица измерения «{raw_unit}» не распознана; "
+                "проверьте её вручную."
+            )
         return ParsedReceiptItem(
             raw_name=name,
             quantity=quantity,
-            unit=groups.get("unit"),
+            unit=unit,
             unit_price=price,
             total_price=total,
         ), warnings

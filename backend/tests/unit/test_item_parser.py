@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+
 from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
 
@@ -12,11 +13,11 @@ from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
 @pytest.mark.parametrize(
     ("row", "quantity", "price", "total", "unit"),
     [
-        ("Молоко 100.00*2шт. =200.00", "2", "100.00", "200.00", "шт."),
+        ("Молоко 100.00*2шт. =200.00", "2", "100.00", "200.00", "шт"),
         ("Молоко 100,00 × 2 = 200,00", "2", "100.00", "200.00", None),
         ("Молоко 2 шт x 100.00 =200.00", "2", "100.00", "200.00", "шт"),
         ("Молоко\n100.00 *2 =200.00", "2", "100.00", "200.00", None),
-        ("Бананы\n169.99*0.432КГ =73.44", "0.432", "169.99", "73.44", "КГ"),
+        ("Бананы\n169.99*0.432КГ =73.44", "0.432", "169.99", "73.44", "кг"),
     ],
 )
 def test_explicit_item_calculation(row, quantity, price, total, unit):
@@ -167,7 +168,7 @@ def test_pipeline_maps_parsed_items_to_processing_data():
     assert result.items[0].raw_name == result.parsed_receipt.items[0].raw_name
 
 
-def test_split_calculation_keeps_name_across_tax_line_and_preserves_raw_unit():
+def test_split_calculation_keeps_name_across_tax_line_and_flags_unknown_unit():
     result = ReceiptParser().parse(
         "Молоко\n100.00*2WT.\nНДС не облагается\n=200.00\nИТОГ 200.00"
     )
@@ -175,7 +176,9 @@ def test_split_calculation_keeps_name_across_tax_line_and_preserves_raw_unit():
     assert item.raw_name == "Молоко"
     assert item.quantity == 2
     assert item.unit_price == 100
-    assert item.unit == "WT."
+    assert item.unit is None
+    assert "WT." in result.raw_ocr_text
+    assert any("WT." in warning for warning in result.warnings)
 
 
 def test_split_header_is_not_mistaken_for_receipt_footer():
