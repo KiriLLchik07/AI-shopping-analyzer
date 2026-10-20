@@ -21,6 +21,7 @@ dependencies = [
     "redis>=8.0.1",
     "rq>=2.12.0",
     "sqlalchemy>=2.0.51",
+    "tzdata",
     "uvicorn>=0.49.0",
 ]
 

@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageOps
 
+from backend.app.parsing.confidence import ocr_line_confidences
+from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.tests.ocr.metrics import character_error_rate, normalize_text
 
 DATASET_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "ocr" / "v1"
@@ -175,3 +177,21 @@ def test_real_ocr_does_not_regress(
     assert sample["expected_total"] in result.raw_text.replace(",", "."), (
         "Receipt total was not recognized"
     )
+    assert result.fragments
+    parsed = ReceiptParser().parse(
+        result.raw_text, line_confidences=ocr_line_confidences(result)
+    )
+    record_property("parsed_item_count", len(parsed.items))
+    assert parsed.item_confidence_method == "min_ocr_fragment_v1"
+    assert all(
+        item.confidence is not None and 0 <= item.confidence <= 1
+        for item in parsed.items
+    )
+    if sample["id"] in {
+        "receipt_001",
+        "receipt_002",
+        "receipt_004",
+        "receipt_006",
+        "receipt_007",
+    }:
+        assert parsed.items

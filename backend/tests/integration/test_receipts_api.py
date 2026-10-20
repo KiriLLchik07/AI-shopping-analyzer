@@ -1,16 +1,15 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
 from backend.app.main import app
 from backend.app.models.enums import ReceiptStatus
 from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.models.user import User
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
 
@@ -62,7 +61,7 @@ def add_receipts(
     user: User,
     store_names: list[str],
 ) -> list[Receipt]:
-    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
     receipts = [
         Receipt(
             user=user,
@@ -221,7 +220,7 @@ def test_receipt_filters_are_applied_together(
 ) -> None:
     register_and_login(client)
     user = get_registered_user(db_session)
-    target_date = datetime(2026, 5, 10, 12, tzinfo=timezone.utc)
+    target_date = datetime(2026, 5, 10, 12, tzinfo=UTC)
     db_session.add_all(
         [
             Receipt(
@@ -401,7 +400,7 @@ def test_create_update_and_delete_receipt_item(
 
     assert update_response.status_code == 200
     assert update_response.json()["raw_name"] == "Whole milk"
-    assert update_response.json()["quantity"] == 3
+    assert Decimal(update_response.json()["quantity"]) == 3
     assert update_response.json()["category_id"] is None
     assert update_response.json()["unit_price"] == "12.50"
 

@@ -51,6 +51,10 @@ class Receipt(Base):
     raw_ocr_text: Mapped[str | None] = mapped_column(Text)
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     orientation_report: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+    parsing_report: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+    manually_updated_fields: Mapped[list[str]] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
     status: Mapped[ReceiptStatus] = mapped_column(
         Enum(
             ReceiptStatus,
@@ -126,7 +130,7 @@ class ReceiptItem(Base):
         ForeignKey("categories.category_id", ondelete="SET NULL"),
         index=True,
     )
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(15, 3))
     unit: Mapped[str | None] = mapped_column(String(100))
     weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
@@ -157,8 +161,8 @@ class ReceiptItem(Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", "quantity_check"),
         CheckConstraint("weight > 0", "weight_check"),
-        CheckConstraint("unit_price > 0", "unit_price_check"),
-        CheckConstraint("total_price > 0", "total_price_check"),
+        CheckConstraint("unit_price >= 0", "unit_price_check"),
+        CheckConstraint("total_price >= 0", "total_price_check"),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"
         ),

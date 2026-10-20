@@ -7,9 +7,10 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import Receipt, ReceiptItem
 from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.orientation import OrientationReport
-from backend.app.schemas.request import ReceiptItemCreateRequest
+from backend.app.schemas.parsing import ReceiptParsingResult
 
 
 class ReceiptProcessingRepository:
@@ -55,6 +56,7 @@ class ReceiptProcessingRepository:
         if clear_ocr_result:
             receipt.raw_ocr_text = None
             receipt.ocr_confidence = None
+            receipt.parsing_report = None
         if clear_orientation_report:
             receipt.orientation_report = None
         elif orientation_report is not None:
@@ -88,6 +90,7 @@ class ReceiptProcessingRepository:
         receipt.raw_ocr_text = None
         receipt.ocr_confidence = None
         receipt.orientation_report = None
+        receipt.parsing_report = None
         receipt.processing_error_code = None
         receipt.processing_error_message = None
         receipt.status = ReceiptStatus.UPLOADED
@@ -103,10 +106,11 @@ class ReceiptProcessingRepository:
     def store_result(
         self,
         receipt: Receipt,
-        items: Sequence[ReceiptItemCreateRequest],
+        items: Sequence[ReceiptItemData],
         raw_ocr_text: str | None,
         saved_at: datetime,
         status: ReceiptStatus,
+        parsed_receipt: ReceiptParsingResult | None = None,
     ) -> None:
 
         if receipt.processing_replace_items:
@@ -122,6 +126,23 @@ class ReceiptProcessingRepository:
         )
         if receipt.raw_ocr_text is None:
             receipt.raw_ocr_text = raw_ocr_text
+        if parsed_receipt is not None:
+            receipt.parsing_report = parsed_receipt.model_dump(
+                mode="json", exclude={"raw_ocr_text", "items"}
+            )
+            manual_fields = set(receipt.manually_updated_fields or ())
+            if receipt.store_name is None and "store_name" not in manual_fields:
+                receipt.store_name = parsed_receipt.store_name
+            if receipt.total_amount is None and "total_amount" not in manual_fields:
+                receipt.total_amount = parsed_receipt.total_amount
+            purchased_at = parsed_receipt.purchase_datetime
+            if (
+                receipt.purchase_datetime is None
+                and "purchase_datetime" not in manual_fields
+                and purchased_at is not None
+                and purchased_at.utcoffset() is not None
+            ):
+                receipt.purchase_datetime = purchased_at
         receipt.processing_result_saved_at = saved_at
         receipt.status = status
 

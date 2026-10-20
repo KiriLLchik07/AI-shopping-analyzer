@@ -111,7 +111,7 @@ def _process_receipt(
 
         logger.info("Receipt parsing started")
         with processing_metrics.measure(ProcessingStage.PARSING):
-            result = pipeline.parse(ocr_result.raw_text)
+            result = pipeline.parse_with_metadata(ocr_result)
 
         logger.info("Receipt result saving started")
 

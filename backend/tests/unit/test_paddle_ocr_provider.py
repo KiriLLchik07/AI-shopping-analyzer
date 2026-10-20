@@ -41,6 +41,10 @@ def test_cyrillic_result_bgr_and_lazy_model_reuse(configured):
     result = provider.recognize(png())
     assert result.raw_text == "МОЛОКО\nИТОГ 100.00"
     assert result.confidence == pytest.approx(0.9)
+    assert [(part.text, part.confidence) for part in result.fragments] == [
+        ("МОЛОКО", 0.8),
+        ("ИТОГ 100.00", 1.0),
+    ]
     assert engine.predict.call_args.kwargs["input"][0, 0].tolist() == [10, 20, 255]
     provider.recognize(png())
     factory.assert_called_once()
@@ -110,6 +114,25 @@ def test_no_text_has_no_confidence(configured):
     engine.predict.return_value = [{"rec_texts": [], "rec_scores": []}]
     result = provider.recognize(png())
     assert result.raw_text == "" and result.confidence is None
+    assert result.fragments == ()
+
+
+def test_provider_preserves_scores_after_filtering_blank_and_multiline_fragments(
+    configured,
+):
+    provider, engine, _ = configured
+    engine.predict.return_value = [
+        {
+            "rec_texts": [" ", "  Молоко\n100.00*1шт=100.00  ", "ИТОГ 100.00"],
+            "rec_scores": [0.01, 0.8, 0.9],
+        }
+    ]
+    result = provider.recognize(png())
+    assert result.raw_text == "Молоко\n100.00*1шт=100.00\nИТОГ 100.00"
+    assert len(result.fragments) == 2
+    assert result.fragments[0].confidence == 0.8
+    assert result.fragments[0].text == "Молоко\n100.00*1шт=100.00"
+    assert result.confidence == pytest.approx(0.85)
 
 
 @pytest.mark.parametrize(

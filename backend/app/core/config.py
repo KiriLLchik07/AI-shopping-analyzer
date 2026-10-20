@@ -1,5 +1,7 @@
 import itertools
+from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -67,6 +69,34 @@ class MetricsSettings(BaseSettings):
     )
 
 
+class ParsingSettings(BaseSettings):
+    timezone: str | None = None
+    total_tolerance: Decimal = Field(
+        default=Decimal("0.05"),
+        ge=0,
+        max_digits=12,
+        decimal_places=2,
+        allow_inf_nan=False,
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="PARSING_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (ZoneInfoNotFoundError, ValueError) as error:
+                raise ValueError("PARSING_TIMEZONE must be an IANA timezone") from error
+        return value
+
+
 class Settings(BaseSettings):
     database_url: str
     redis_url: str
@@ -122,3 +152,4 @@ setting = Settings()
 image_settings = ImageSettings()
 ocr_settings = OcrSettings()
 metrics_settings = MetricsSettings()
+parsing_settings = ParsingSettings()

@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.orientation import OrientationReport
+from backend.app.schemas.parsing import ReceiptParsingReport
 
 
 class UserResponse(BaseModel):
@@ -55,6 +56,7 @@ class ReceiptResponse(BaseModel):
     raw_ocr_text: str | None
     ocr_confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     orientation_report: OrientationReport | None = None
+    parsing_report: ReceiptParsingReport | None = None
     status: ReceiptStatus
     processing_error_code: str | None = None
     processing_error_message: str | None = None
@@ -80,13 +82,19 @@ class ReceiptItemResponse(BaseModel):
     raw_name: str
     normalized_name: str | None
     category_id: UUID | None
-    quantity: int
+    quantity: Decimal | None
     unit: str | None
     weight: Decimal | None
     unit_price: Decimal | None
     total_price: Decimal | None
     discount_amount: Decimal
-    confidence: float | None
+    confidence: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        allow_inf_nan=False,
+        description="Минимальная оценка OCR-фрагментов позиции; не вероятность правильного парсинга.",
+    )
     is_impulse_candidate: bool
     created_at: datetime
     updated_at: datetime
