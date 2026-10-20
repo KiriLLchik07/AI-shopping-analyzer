@@ -1,13 +1,14 @@
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, DateTime, cast, distinct, func, literal, select
+from sqlalchemy import Date, DateTime, and_, cast, distinct, func, literal, or_, select
 from sqlalchemy.dialects.postgresql import INTERVAL
 from sqlalchemy.orm import Session
 
 from backend.app.models import Category, Receipt, ReceiptItem
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.analytics import (
+    MonthComparisonPeriods,
     ProductSort,
     ResolvedAnalyticsPeriod,
     TrendGroup,
@@ -21,11 +22,17 @@ class AnalyticsRepository:
         self.session = session
 
     @staticmethod
-    def _filters(user_id: UUID, period: ResolvedAnalyticsPeriod):
+    def _confirmed_filters(user_id: UUID):
         return (
             Receipt.receipt_user_id == user_id,
             Receipt.status == ReceiptStatus.COMPLETED,
             Receipt.confirmed_at.is_not(None),
+        )
+
+    @classmethod
+    def _filters(cls, user_id: UUID, period: ResolvedAnalyticsPeriod):
+        return (
+            *cls._confirmed_filters(user_id),
             Receipt.purchase_datetime >= period.start_at,
             Receipt.purchase_datetime < period.end_at,
         )
@@ -41,6 +48,31 @@ class AnalyticsRepository:
             func.coalesce(func.sum(Receipt.total_amount), ZERO).label("total_amount"),
             func.count(Receipt.receipt_id).label("purchase_count"),
         ).where(*self._filters(user_id, period))
+        return self.session.execute(query).mappings().one()
+
+    def month_comparison(self, user_id: UUID, periods: MonthComparisonPeriods):
+        current = and_(
+            Receipt.purchase_datetime >= periods.current_start,
+            Receipt.purchase_datetime < periods.current_end,
+        )
+        previous = and_(
+            Receipt.purchase_datetime >= periods.previous_start,
+            Receipt.purchase_datetime < periods.previous_end,
+        )
+        query = select(
+            func.coalesce(func.sum(Receipt.total_amount).filter(current), ZERO).label(
+                "current_total_amount"
+            ),
+            func.count(Receipt.receipt_id)
+            .filter(current)
+            .label("current_purchase_count"),
+            func.coalesce(func.sum(Receipt.total_amount).filter(previous), ZERO).label(
+                "previous_total_amount"
+            ),
+            func.count(Receipt.receipt_id)
+            .filter(previous)
+            .label("previous_purchase_count"),
+        ).where(*self._confirmed_filters(user_id), or_(current, previous))
         return self.session.execute(query).mappings().one()
 
     def categories(self, user_id: UUID, period: ResolvedAnalyticsPeriod):

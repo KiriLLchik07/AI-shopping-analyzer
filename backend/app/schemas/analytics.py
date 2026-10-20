@@ -2,7 +2,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -179,3 +179,47 @@ class AnalyticsTrendsResponse(BaseModel):
     period: ResolvedAnalyticsPeriod
     group_by: TrendGroup
     points: list[TrendAnalyticsPoint]
+
+
+class AnalyticsMonthComparisonParams(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    timezone: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str | None) -> str | None:
+        return AnalyticsPeriodParams.validate_timezone(value)
+
+
+class MonthComparisonPeriods(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    timezone: str
+    as_of: AwareDatetime
+    current_start: AwareDatetime
+    current_end: AwareDatetime
+    previous_start: AwareDatetime
+    previous_end: AwareDatetime
+
+
+class MonthComparisonTotal(BaseModel):
+    start_at: AwareDatetime
+    end_at: AwareDatetime = Field(description="Исключительная верхняя граница периода.")
+    total_amount: AnalyticsMoney
+    purchase_count: PurchaseCount
+
+
+class AnalyticsMonthComparisonResponse(BaseModel):
+    timezone: str
+    as_of: AwareDatetime
+    comparison_basis: Literal["month_to_date"] = "month_to_date"
+    current: MonthComparisonTotal
+    previous: MonthComparisonTotal
+    amount_change: Decimal = Field(allow_inf_nan=False)
+    amount_change_percent: Decimal | None = Field(
+        allow_inf_nan=False,
+        description="null, если прошлое значение равно нулю, а текущее — нет.",
+    )
+    purchase_count_change: int
+    purchase_count_change_percent: Decimal | None = Field(allow_inf_nan=False)

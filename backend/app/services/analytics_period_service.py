@@ -4,8 +4,10 @@ from zoneinfo import ZoneInfo
 
 from backend.app.core.config import AnalyticsSettings
 from backend.app.schemas.analytics import (
+    AnalyticsMonthComparisonParams,
     AnalyticsPeriod,
     AnalyticsPeriodParams,
+    MonthComparisonPeriods,
     ResolvedAnalyticsPeriod,
 )
 
@@ -62,3 +64,45 @@ def resolve_analytics_period(
         start_at=start_at,
         end_at=end_at,
     )
+
+
+def resolve_month_comparison_periods(
+    params: AnalyticsMonthComparisonParams,
+    settings: AnalyticsSettings,
+    *,
+    now: datetime | None = None,
+) -> MonthComparisonPeriods:
+    clock = now if now is not None else datetime.now(UTC)
+    if clock.utcoffset() is None:
+        raise ValueError("The current time must include a timezone")
+    timezone = params.timezone or settings.timezone
+    zone = ZoneInfo(timezone)
+    try:
+        local = clock.astimezone(zone)
+        current_start = datetime.combine(local.date().replace(day=1), time.min, zone)
+        previous_date = (current_start.date() - timedelta(days=1)).replace(day=1)
+        previous_start = datetime.combine(previous_date, time.min, zone)
+        if local.day > monthrange(previous_date.year, previous_date.month)[1]:
+            previous_end = current_start
+        else:
+            previous_end = datetime.combine(
+                previous_date.replace(day=local.day), local.time(), zone
+            )
+        for start, end in ((current_start, local), (previous_start, previous_end)):
+            days = (end.date() - start.date()).days + (end.time() != time.min)
+            if days > settings.max_period_days:
+                raise ValueError(
+                    f"Period must not exceed {settings.max_period_days} calendar days"
+                )
+        return MonthComparisonPeriods(
+            timezone=timezone,
+            as_of=clock.astimezone(UTC),
+            current_start=current_start.astimezone(UTC),
+            current_end=clock.astimezone(UTC),
+            previous_start=previous_start.astimezone(UTC),
+            previous_end=previous_end.astimezone(UTC),
+        )
+    except OverflowError as error:
+        raise ValueError(
+            "Period boundaries are outside the supported datetime range"
+        ) from error
