@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -48,6 +49,8 @@ class Receipt(Base):
     fiscal_sign: Mapped[str | None] = mapped_column(String)
     image_object_key: Mapped[str] = mapped_column(String(256), nullable=False)
     raw_ocr_text: Mapped[str | None] = mapped_column(Text)
+    ocr_confidence: Mapped[float | None] = mapped_column(Float)
+    orientation_report: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
     status: Mapped[ReceiptStatus] = mapped_column(
         Enum(
             ReceiptStatus,
@@ -97,6 +100,10 @@ class Receipt(Base):
         Index("ix_receipts_user_datetime", "receipt_user_id", "purchase_datetime"),
         CheckConstraint("LENGTH(store_inn) <= 12", "store_inn_check"),
         CheckConstraint("total_amount > 0", "total_amount_check"),
+        CheckConstraint(
+            "ocr_confidence >= 0 AND ocr_confidence <= 1",
+            name="receipt_ocr_confidence_range",
+        ),
     )
 
 

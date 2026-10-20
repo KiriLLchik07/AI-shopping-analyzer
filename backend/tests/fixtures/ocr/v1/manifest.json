@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-10-20",
+  "purpose": "Regression guard for manually redacted receipts, not an independent quality estimate",
+  "normalization": "Unicode NFC, whitespace collapse, separator-only lines removed; case, punctuation and literal @ preserved",
+  "preprocessing": "EXIF transpose and RGB PNG only; no orientation model, contrast enhancement or custom resizing",
+  "allowed_cer_increase": 0.03,
+  "runtime": {
+    "device": "cpu",
+    "cpu_threads": 4,
+    "versions": {
+      "paddleocr": "3.3.2",
+      "paddlepaddle": "3.2.2",
+      "paddlex": "3.3.13"
+    },
+    "models": [
+      {
+        "name": "PP-OCRv5_mobile_det",
+        "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det/resolve/0d63e78e2b680928f6b1747d76a08db6e645efb7",
+        "revision": "0d63e78e2b680928f6b1747d76a08db6e645efb7",
+        "files_sha256": {
+          "inference.json": "05feef1acb00aa4cd7362b15f7f501fc4f99d7b1fa73c1c871e0c7b1504b0f5c",
+          "inference.pdiparams": "afa1820cb16c1fd0dad589d0f8b389139061c1ef6d68019685fd07be997dda5b",
+          "inference.yml": "98069072e1b6b37d727fd9d9f11725faa46d6ea0de012f2ed26caea011c37699"
+        }
+      },
+      {
+        "name": "cyrillic_PP-OCRv5_mobile_rec",
+        "url": "https://huggingface.co/PaddlePaddle/cyrillic_PP-OCRv5_mobile_rec/resolve/712d2d65556ccc1ea7b5d2bb232b018838b6a3ab",
+        "revision": "712d2d65556ccc1ea7b5d2bb232b018838b6a3ab",
+        "files_sha256": {
+          "inference.json": "5d90f1bfca52d80c01de176c5238fae2459995a99ff1dbfe5319ab4ed1735df2",
+          "inference.pdiparams": "434dc9fa2a99fa3653e08f8cf793ae56be7dd41c35c4980e6255147cc02bbc80",
+          "inference.yml": "5c76cc91fa98410178a09f498db10050d0ec1634a660053d3005ab7be581f501"
+        }
+      }
+    ]
+  },
+  "samples": [
+    {
+      "id": "receipt_001",
+      "image": "images/receipt_001.jpg",
+      "expected_text": "texts/receipt_001.txt",
+      "image_sha256": "f16cc5096497328b67313af2cb273e17819c91655374b2c1fb0fa2f0a2f26b47",
+      "expected_text_sha256": "9c8b5cf8a7f06b1943d84611d6cde72bf729bf987863b301be591d29968ab1bd",
+      "size": [
+        804,
+        1072
+      ],
+      "baseline_cer": 0.06418918918918919,
+      "expected_total": "3240.00"
+    },
+    {
+      "id": "receipt_002",
+      "image": "images/receipt_002.jpg",
+      "expected_text": "texts/receipt_002.txt",
+      "image_sha256": "b5dc38bc7ecdada7a397f186f641ec01a781ffdb8858235ddf6731384072d399",
+      "expected_text_sha256": "0fe705c9e3ac7c249f3f635e82969bb5a0908e41f0419e3021850ee697215a14",
+      "size": [
+        1536,
+        2048
+      ],
+      "baseline_cer": 0.37037037037037035,
+      "expected_total": "466.94"
+    },
+    {
+      "id": "receipt_003",
+      "image": "images/receipt_003.jpg",
+      "expected_text": "texts/receipt_003.txt",
+      "image_sha256": "a2ff9bc3ebc1d2e023ae3ea45b2ceb02a2e10d75c65d7cf135de027082eb5173",
+      "expected_text_sha256": "0206f429af8def95159eae6f47afd58bc1b259f99e8383f2482c6e48de7ee62c",
+      "size": [
+        1536,
+        2047
+      ],
+      "baseline_cer": 0.4855072463768116,
+      "expected_total": "79.99"
+    },
+    {
+      "id": "receipt_004",
+      "image": "images/receipt_004.jpg",
+      "expected_text": "texts/receipt_004.txt",
+      "image_sha256": "4d2732ceb72a106dd1dde600af866aa38ccdde21a280d64525d20e3908d13f25",
+      "expected_text_sha256": "580af8eaffe1d16577d160f80a57a4a7edc047a31a097a616a376901e253a502",
+      "size": [
+        1536,
+        2046
+      ],
+      "baseline_cer": 0.47058823529411764,
+      "expected_total": "69.00"
+    },
+    {
+      "id": "receipt_005",
+      "image": "images/receipt_005.jpg",
+      "expected_text": "texts/receipt_005.txt",
+      "image_sha256": "e64c2b84f69a260b4f706ee74e2359aefb6ac4b2f594947940e097e6fb726672",
+      "expected_text_sha256": "70daabce491b00451464ac5be3f229eceb39b0537da94be5c5e4faa9162915c8",
+      "size": [
+        1536,
+        2048
+      ],
+      "baseline_cer": 0.34690265486725663,
+      "expected_total": "294.97"
+    },
+    {
+      "id": "receipt_006",
+      "image": "images/receipt_006.jpg",
+      "expected_text": "texts/receipt_006.txt",
+      "image_sha256": "90f8b226cc282813ef540d956564b8ad5492a9bb00af518099f751ced4f47c0e",
+      "expected_text_sha256": "8e2068aa0709f87fb98b5f23185b7eac0a0089b317c94f24965d2272c0b1dbe7",
+      "size": [
+        1536,
+        2046
+      ],
+      "baseline_cer": 0.07142857142857142,
+      "expected_total": "294.00"
+    },
+    {
+      "id": "receipt_007",
+      "image": "images/receipt_007.jpg",
+      "expected_text": "texts/receipt_007.txt",
+      "image_sha256": "c8b86d0c07779d3bd9bbdfcf8e93a650677039311f320e2f1ed0a5614974f904",
+      "expected_text_sha256": "40016f3b100f285dfc226283274dfcaa294eadbe2ac90b680901fc639bb93e20",
+      "size": [
+        2048,
+        1536
+      ],
+      "baseline_cer": 0.09973045822102426,
+      "expected_total": "230.42"
+    }
+  ],
+  "preprocessing_evaluation": "preprocessing-evaluation.json"
+}

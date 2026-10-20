@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier, Event
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,15 +14,22 @@ from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
 from backend.app.models.enums import ReceiptStatus
+from backend.app.ocr.exceptions import OcrConfigurationError, OcrRecognitionError
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
 )
+from backend.app.schemas.ocr import OcrResult
+from backend.app.schemas.orientation import OrientationDecision, OrientationReport
 from backend.app.schemas.processing import (
+    ReceiptPreprocessingResult,
     ReceiptProcessingInput,
     ReceiptProcessingResult,
 )
 from backend.app.schemas.request import ReceiptItemCreateRequest
-from backend.app.services.receipt_pipeline import ReceiptPipeline
+from backend.app.services.receipt_pipeline import (
+    ReceiptPipeline,
+    UnconfiguredReceiptPipeline,
+)
 from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
     SaveProcessingOutcome,
@@ -60,6 +68,225 @@ def make_result() -> ReceiptProcessingResult:
     )
 
 
+def configured_ocr_pipeline(provider):
+    storage, normalizer = Mock(), Mock()
+    storage.download.return_value = b"stored-image"
+    normalizer.normalize_with_report.return_value = Mock(
+        image=b"normalized-image",
+        report=uncertain_orientation_report(),
+    )
+    return UnconfiguredReceiptPipeline(storage, normalizer, provider)
+
+
+def test_worker_uses_injected_ocr_provider(receipt_id, monkeypatch):
+    provider = Mock()
+    provider.recognize.return_value = OcrResult(
+        raw_text="МОЛОКО\nИТОГ 100.00", confidence=0.9
+    )
+    pipeline = configured_ocr_pipeline(provider)
+    # Only the parser is substituted: production parsing is a later stage.
+    parser = Mock(return_value=make_result())
+    monkeypatch.setattr(pipeline, "parse", parser)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
+    jobs.process_receipt(str(receipt_id))
+    provider.recognize.assert_called_once_with(b"normalized-image")
+    parser.assert_called_once_with("МОЛОКО\nИТОГ 100.00")
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.raw_ocr_text == "МОЛОКО\nИТОГ 100.00"
+        assert receipt.ocr_confidence == pytest.approx(0.9)
+        assert receipt.processing_result_saved_at is not None
+
+
+@pytest.mark.parametrize("confidence", [None, 0.0, 0.91, 1.0])
+def test_ocr_is_committed_before_parser_and_retained_after_failure(
+    receipt_id,
+    monkeypatch,
+    client,
+    confidence,
+):
+    text = "МОЛОКО\nИТОГ 100.00"
+    provider = Mock()
+    provider.recognize.return_value = OcrResult(raw_text=text, confidence=confidence)
+    pipeline = configured_ocr_pipeline(provider)
+
+    def parse(raw_text):
+        assert raw_text == text
+        with SessionLocal() as session:
+            receipt = session.get(Receipt, receipt_id)
+            assert receipt.status == ReceiptStatus.PARSING
+            assert receipt.raw_ocr_text == text
+            assert receipt.ocr_confidence == confidence
+        raise NotImplementedError("Parser is not implemented")
+
+    monkeypatch.setattr(pipeline, "parse", parse)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
+    with pytest.raises(NotImplementedError):
+        jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_result_saved_at is None
+        assert receipt.items == []
+        user = receipt.user
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    for url in (f"/api/receipts/{receipt_id}", "/api/receipts"):
+        response = client.get(url)
+        assert response.status_code == 200
+        body = response.json()
+        body = body["items"][0] if url == "/api/receipts" else body
+        assert body["raw_ocr_text"] == text
+        assert body["ocr_confidence"] == confidence
+        assert body["status"] == "failed"
+
+
+def start_ocr(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id) is not None
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+    )
+    return service
+
+
+def test_empty_ocr_text_is_saved_and_not_replaced_by_parser(receipt_id):
+    service = start_ocr(receipt_id)
+    assert service.save_ocr_result(receipt_id, OcrResult(raw_text="", confidence=None))
+    service.save_result(receipt_id, make_result())
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.raw_ocr_text == ""
+        assert receipt.ocr_confidence is None
+
+
+@pytest.mark.parametrize("reprocess", [False, True])
+def test_new_attempt_clears_ocr_and_rejects_old_results(receipt_id, reprocess):
+    service = start_ocr(receipt_id)
+    old = OcrResult(raw_text="old text", confidence=0.4)
+    assert service.save_ocr_result(receipt_id, old)
+    assert service.mark_failed(receipt_id)
+    version = 1
+    if reprocess:
+        with SessionLocal() as session:
+            owner = session.get(Receipt, receipt_id).receipt_user_id
+        version = service.prepare_process(receipt_id, owner, False).processing_version
+        with SessionLocal() as session:
+            receipt = session.get(Receipt, receipt_id)
+            assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
+    assert service.start_processing(receipt_id, version) is not None
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
+    assert not service.save_ocr_result(receipt_id, old, version)
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        version,
+    )
+    if reprocess:
+        assert not service.save_ocr_result(receipt_id, old, 1)
+    fresh = OcrResult(raw_text="new text", confidence=0.95)
+    assert service.save_ocr_result(receipt_id, fresh, version)
+    assert not service.save_ocr_result(receipt_id, old, version)
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.raw_ocr_text == fresh.raw_text
+        assert receipt.ocr_confidence == fresh.confidence
+
+
+@pytest.mark.parametrize(
+    "status", [s for s in ReceiptStatus if s != ReceiptStatus.OCR_PROCESSING]
+)
+def test_ocr_result_rejected_in_wrong_status(receipt_id, status):
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).status = status
+    assert not ReceiptProcessingService(SessionLocal).save_ocr_result(
+        receipt_id,
+        OcrResult(raw_text="late result", confidence=0.5),
+    )
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == status
+        assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
+
+
+def test_ocr_save_rejects_missing_and_finished_receipt(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    result = OcrResult(raw_text="late result", confidence=0.5)
+    assert not service.save_ocr_result(uuid4(), result)
+    service.save_result(receipt_id, make_result())
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).status = ReceiptStatus.OCR_PROCESSING
+    assert not service.save_ocr_result(receipt_id, result)
+
+
+def test_concurrent_ocr_saves_keep_one_consistent_result(receipt_id):
+    start_ocr(receipt_id)
+    barrier = Barrier(2)
+    results = [
+        OcrResult(raw_text="first", confidence=0.2),
+        OcrResult(raw_text="second", confidence=0.8),
+    ]
+
+    def save(result):
+        barrier.wait(timeout=5)
+        return ReceiptProcessingService(SessionLocal).save_ocr_result(
+            receipt_id, result
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(save, results))
+    assert sorted(outcomes) == [False, True]
+    winner = results[outcomes.index(True)]
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.PARSING
+        assert receipt.raw_ocr_text == winner.raw_text
+        assert receipt.ocr_confidence == winner.confidence
+
+
+def test_ocr_and_status_rollback_together(receipt_id, monkeypatch):
+    service = start_ocr(receipt_id)
+    store = ReceiptProcessingRepository.store_ocr_result
+
+    def fail_after_flush(repository, receipt, result):
+        store(repository, receipt, result)
+        raise RuntimeError("Transaction failed")
+
+    monkeypatch.setattr(
+        ReceiptProcessingRepository, "store_ocr_result", fail_after_flush
+    )
+    with pytest.raises(RuntimeError, match="Transaction failed"):
+        service.save_ocr_result(receipt_id, OcrResult(raw_text="text", confidence=0.9))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.OCR_PROCESSING
+        assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
+
+
+def test_provider_failure_marks_receipt_failed_before_parsing(receipt_id, monkeypatch):
+    provider = Mock()
+    provider.recognize.side_effect = OcrRecognitionError("PRIVATE SDK details")
+    pipeline = configured_ocr_pipeline(provider)
+    parser = Mock()
+    monkeypatch.setattr(pipeline, "parse", parser)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
+    with pytest.raises(OcrRecognitionError):
+        jobs.process_receipt(str(receipt_id))
+    parser.assert_not_called()
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_error_code == "ocr_failed"
+        assert receipt.raw_ocr_text is None
+        assert receipt.ocr_confidence is None
+        assert "PRIVATE" not in receipt.processing_error_message
+        assert not item_ids(receipt_id)
+
+
 def item_ids(receipt_id: UUID) -> set[UUID]:
     with SessionLocal() as session:
         return set(
@@ -80,6 +307,120 @@ class StubPipeline(ReceiptPipeline):
 
     def parse(self, raw_text: str) -> ReceiptProcessingResult:
         return make_result()
+
+
+def uncertain_orientation_report():
+    return OrientationReport(
+        exif_corrected=False,
+        decision=OrientationDecision(
+            accepted=False,
+            correction_angle=None,
+            reason="confident_disagreement",
+            votes=(),
+        ),
+        model_rotation_enabled=True,
+        applied_angle=0,
+        needs_review=True,
+        review_reason="confident_disagreement",
+    )
+
+
+def test_orientation_report_is_saved_before_ocr_failure_and_visible_in_api(
+    receipt_id, monkeypatch, client
+):
+    report = uncertain_orientation_report()
+
+    class Pipeline(StubPipeline):
+        def preprocess_with_metadata(self, source):
+            return ReceiptPreprocessingResult(image=b"image", orientation_report=report)
+
+        def recognize(self, image):
+            with SessionLocal() as session:
+                receipt = session.get(Receipt, receipt_id)
+                assert receipt.status == ReceiptStatus.OCR_PROCESSING
+                assert receipt.orientation_report == report.model_dump(mode="json")
+            raise ValueError("OCR unavailable")
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", Pipeline)
+    with pytest.raises(ValueError, match="OCR unavailable"):
+        jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.FAILED
+        owner = session.get(User, receipt.receipt_user_id)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: owner)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    assert response.json()["orientation_report"] == report.model_dump(mode="json")
+
+
+def test_uncertain_orientation_continues_processing_and_duplicate_job_keeps_report(
+    receipt_id, monkeypatch
+):
+    report = uncertain_orientation_report()
+    calls = []
+
+    class Pipeline(StubPipeline):
+        def preprocess_with_metadata(self, source):
+            calls.append(True)
+            return ReceiptPreprocessingResult(image=b"image", orientation_report=report)
+
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", Pipeline)
+    jobs.process_receipt(str(receipt_id))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.orientation_report == report.model_dump(mode="json")
+    assert calls == [True]
+
+
+def test_reprocess_clears_orientation_and_stale_job_cannot_restore_it(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    report = uncertain_orientation_report()
+    service.start_processing(receipt_id)
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        orientation_report=report,
+    )
+    service.mark_failed(receipt_id)
+    with SessionLocal() as session:
+        owner_id = session.get(Receipt, receipt_id).receipt_user_id
+    ticket = service.prepare_process(receipt_id, owner_id, replace_items=False)
+    service.start_processing(receipt_id, ticket.processing_version)
+    assert not service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        processing_version=1,
+        orientation_report=report,
+    )
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).orientation_report is None
+    assert service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        processing_version=ticket.processing_version,
+        orientation_report=report,
+    )
+
+
+def test_retry_clears_previous_attempt_orientation_report(receipt_id):
+    service = ReceiptProcessingService(SessionLocal)
+    service.start_processing(receipt_id)
+    service.advance_status(
+        receipt_id,
+        ReceiptStatus.PREPROCESSING,
+        ReceiptStatus.OCR_PROCESSING,
+        orientation_report=uncertain_orientation_report(),
+    )
+    service.mark_failed(receipt_id)
+    assert service.start_processing(receipt_id) is not None
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).orientation_report is None
 
 
 def receipt_status(receipt_id: UUID) -> ReceiptStatus:
@@ -431,6 +772,8 @@ def test_parallel_result_saves_are_idempotent(receipt_id):
     ("error_type", "expected_code"),
     [
         (RuntimeError, "processing_failed"),
+        (OcrConfigurationError, "ocr_not_configured"),
+        (OcrRecognitionError, "ocr_failed"),
         (ObjectStorageError, "image_storage_unavailable"),
         (ReceiptProcessingConflictError, "processing_conflict"),
     ],

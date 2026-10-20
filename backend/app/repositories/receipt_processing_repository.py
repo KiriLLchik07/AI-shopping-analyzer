@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import Receipt, ReceiptItem
 from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.ocr import OcrResult
+from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.request import ReceiptItemCreateRequest
 
 
@@ -40,10 +42,23 @@ class ReceiptProcessingRepository:
         )
 
     def set_status(
-        self, receipt: Receipt, status: ReceiptStatus, clear_error: bool = False
+        self,
+        receipt: Receipt,
+        status: ReceiptStatus,
+        clear_error: bool = False,
+        orientation_report: OrientationReport | None = None,
+        clear_orientation_report: bool = False,
+        clear_ocr_result: bool = False,
     ) -> None:
 
         receipt.status = status
+        if clear_ocr_result:
+            receipt.raw_ocr_text = None
+            receipt.ocr_confidence = None
+        if clear_orientation_report:
+            receipt.orientation_report = None
+        elif orientation_report is not None:
+            receipt.orientation_report = orientation_report.model_dump(mode="json")
         if clear_error:
             receipt.processing_error_code = None
             receipt.processing_error_message = None
@@ -70,10 +85,19 @@ class ReceiptProcessingRepository:
         receipt.processing_replace_items = replace_items
 
         receipt.processing_result_saved_at = None
+        receipt.raw_ocr_text = None
+        receipt.ocr_confidence = None
+        receipt.orientation_report = None
         receipt.processing_error_code = None
         receipt.processing_error_message = None
         receipt.status = ReceiptStatus.UPLOADED
 
+        self.session.flush()
+
+    def store_ocr_result(self, receipt: Receipt, result: OcrResult) -> None:
+        receipt.raw_ocr_text = result.raw_text
+        receipt.ocr_confidence = result.confidence
+        receipt.status = ReceiptStatus.PARSING
         self.session.flush()
 
     def store_result(
@@ -96,7 +120,8 @@ class ReceiptProcessingRepository:
                 for item in items
             ]
         )
-        receipt.raw_ocr_text = raw_ocr_text
+        if receipt.raw_ocr_text is None:
+            receipt.raw_ocr_text = raw_ocr_text
         receipt.processing_result_saved_at = saved_at
         receipt.status = status
 

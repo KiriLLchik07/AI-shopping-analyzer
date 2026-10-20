@@ -9,7 +9,6 @@ from backend.app.core.logging import (
     normalize_correlation_id,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -28,9 +27,7 @@ class RequestLoggingMiddleware:
             return
 
         headers = Headers(scope=scope)
-        correlation_id = normalize_correlation_id(
-            headers.get("X-Correlation-ID")
-        )
+        correlation_id = normalize_correlation_id(headers.get("X-Correlation-ID"))
 
         scope.setdefault("state", {})["correlation_id"] = correlation_id
 

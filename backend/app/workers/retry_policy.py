@@ -18,6 +18,8 @@ from rq.job import Job
 
 from backend.app.core.logging import log_context
 from backend.app.db.session import SessionLocal
+from backend.app.schemas.processing_metrics import MetricOutcome, ProcessingStage
+from backend.app.services.processing_metrics_service import processing_metrics
 from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
 )
@@ -39,6 +41,7 @@ RETRYABLE_STORAGE_CODES = {
 
 class WorkHorseInterruptedError(RuntimeError):
     pass
+
 
 def is_interruption_error(error: BaseException) -> bool:
     return isinstance(error, (AbandonedJobError, WorkHorseInterruptedError))
@@ -99,7 +102,7 @@ def get_receipt_job_arguments(job: Job) -> tuple[UUID, int]:
     return receipt_id, processing_version
 
 
-def restore_interrupted_receipt(job: Job) -> None:
+def restore_interrupted_receipt(job: Job) -> bool:
     receipt_id, processing_version = get_receipt_job_arguments(job)
     service = ReceiptProcessingService(SessionLocal)
     try:
@@ -110,6 +113,7 @@ def restore_interrupted_receipt(job: Job) -> None:
         logger.exception("Could not persist interrupted receipt state")
         raise
     logger.info("Receipt interruption handled state_changed=%s", changed)
+    return changed
 
 
 def receipt_failure_callback(
@@ -120,8 +124,10 @@ def receipt_failure_callback(
     traceback: TracebackType | StackSummary | None,
 ) -> None:
     with log_context(**get_job_log_context(job)):
-        if is_interruption_error(exc_value):
-            restore_interrupted_receipt(job)
+        if is_interruption_error(exc_value) and restore_interrupted_receipt(job):
+            processing_metrics.record(
+                ProcessingStage.PIPELINE, MetricOutcome.INTERRUPTED
+            )
 
         _apply_retry_policy(
             job=job,

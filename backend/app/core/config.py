@@ -1,13 +1,20 @@
 import itertools
 from pathlib import Path
 
-from pydantic import Field, PositiveInt, field_validator
+from pydantic import Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ImageSettings(BaseSettings):
+    orientation_apply_model_rotation: bool = False
+    orientation_min_confidence: float = Field(
+        default=0.8, ge=0, le=1, allow_inf_nan=False
+    )
+    orientation_model_dir: Path = BACKEND_ROOT / "models" / "doc-orientation"
+    orientation_device: str = "cpu"
+    orientation_cpu_threads: int = Field(default=4, ge=1, le=64)
     url_ttl_seconds: int = Field(default=300, ge=1, le=900)
     max_upload_bytes: PositiveInt = 10 * 1024 * 1024
     max_pixels: PositiveInt = 20_000_000
@@ -21,6 +28,39 @@ class ImageSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="IMAGE_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+class OcrSettings(BaseSettings):
+    model_dir: Path = BACKEND_ROOT / "models" / "ocr"
+    detection_model_name: str = "PP-OCRv5_mobile_det"
+    recognition_model_name: str = "cyrillic_PP-OCRv5_mobile_rec"
+    model_files: tuple[str, ...] = (
+        "inference.json",
+        "inference.pdiparams",
+        "inference.yml",
+    )
+    device: str = "cpu"
+    cpu_threads: int = Field(default=4, ge=1, le=64)
+
+    model_config = SettingsConfigDict(
+        env_prefix="OCR_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+class MetricsSettings(BaseSettings):
+    access_token: SecretStr | None = None
+    retention_days: int = Field(default=30, ge=1, le=365)
+    redis_timeout_seconds: float = Field(default=0.2, gt=0, le=2, allow_inf_nan=False)
+
+    model_config = SettingsConfigDict(
+        env_prefix="METRICS_",
         env_file=BACKEND_ROOT / ".env.backend",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -69,10 +109,7 @@ class Settings(BaseSettings):
     def validate_receipt_retry_intervals(
         cls, value: tuple[int, ...]
     ) -> tuple[int, ...]:
-        if any(
-            current > following
-            for current, following in itertools.pairwise(value)
-        ):
+        if any(current > following for current, following in itertools.pairwise(value)):
             raise ValueError("RECEIPT_RETRY_INTERVALS_SECONDS must be non-decreasing")
 
         if any(interval > 86400 for interval in value):
@@ -83,3 +120,5 @@ class Settings(BaseSettings):
 
 setting = Settings()
 image_settings = ImageSettings()
+ocr_settings = OcrSettings()
+metrics_settings = MetricsSettings()

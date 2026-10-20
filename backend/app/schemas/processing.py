@@ -2,7 +2,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.request import ReceiptItemCreateRequest
+
+
+class ReceiptPreprocessingResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    image: bytes
+    orientation_report: OrientationReport | None = None
 
 
 class ReceiptProcessingResult(BaseModel):

@@ -12,7 +12,6 @@ from backend.app.core.logging import (
     normalize_correlation_id,
 )
 
-
 logger = logging.getLogger(__name__)
 
 queue_connection = Redis.from_url(
@@ -33,11 +32,7 @@ def enqueue_receipt(
 ) -> str:
     intervals = list(setting.receipt_retry_intervals_seconds)
 
-    retry = (
-        Retry(max=len(intervals), interval=intervals)
-        if intervals
-        else None
-    )
+    retry = Retry(max=len(intervals), interval=intervals) if intervals else None
 
     correlation_id = normalize_correlation_id(get_correlation_id())
 
@@ -61,8 +56,7 @@ def enqueue_receipt(
                 },
                 retry=retry,
                 on_failure=Callback(
-                    "backend.app.workers.retry_policy."
-                    "receipt_failure_callback"
+                    "backend.app.workers.retry_policy.receipt_failure_callback"
                 ),
             )
         except RedisError:

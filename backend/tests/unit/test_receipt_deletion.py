@@ -11,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app.api import receipts as receipts_api
 from backend.app.api.dependencies.auth import get_current_user
-from backend.app.api.dependencies.storage import get_object_storage
 from backend.app.api.exception_handlers import register_exception_handlers
 from backend.app.core.exceptions import (
     ReceiptDeletionUnavailableError,
@@ -23,6 +22,7 @@ from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.services.object_cleanup_service import cleanup_one
 from backend.app.services.receipt_service import ReceiptService
 from backend.app.storage.exception import ObjectStorageError
+from backend.app.storage.factory import get_object_storage
 
 
 @pytest.fixture

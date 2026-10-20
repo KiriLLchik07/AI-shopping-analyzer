@@ -5,3 +5,6 @@ __pycache__/
 .env*
 !.env.example
 tests/
+data/
+models/
+.uv-cache/

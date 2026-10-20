@@ -24,11 +24,19 @@ dependencies = [
     "uvicorn>=0.49.0",
 ]
 
+[project.optional-dependencies]
+ocr-cpu = [
+    "numpy>=1.26,<3",
+    "paddleocr==3.3.2",
+    "paddlepaddle==3.2.2",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".."]
 markers = [
     "integration: requires isolated PostgreSQL and Redis services",
+    "ocr: real local CPU inference; enable with RUN_OCR_TESTS=1",
 ]
 
 [dependency-groups]

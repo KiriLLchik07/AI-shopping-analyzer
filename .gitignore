@@ -19,3 +19,7 @@ backend/test.py
 /RESOURCES.md
 
 /docs
+
+backend/data/private
+/backend/models/
+/backend/.uv-cache/

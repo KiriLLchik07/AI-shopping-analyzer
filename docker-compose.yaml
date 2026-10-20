@@ -60,6 +60,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: api
     depends_on:
       postgres:
         condition: service_healthy
@@ -76,9 +77,18 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: worker-cpu
     command: ["python", "-m", "backend.app.workers.worker"]
     env_file:
       - ./backend/.env.docker
+    environment:
+      IMAGE_ORIENTATION_DEVICE: cpu
+      IMAGE_ORIENTATION_MODEL_DIR: /models/doc-orientation
+      OCR_DEVICE: cpu
+      OCR_MODEL_DIR: /models/ocr
+    volumes:
+      - ./backend/models/doc-orientation:/models/doc-orientation:ro
+      - ./backend/models/ocr:/models/ocr:ro
     depends_on:
       postgres:
         condition: service_healthy

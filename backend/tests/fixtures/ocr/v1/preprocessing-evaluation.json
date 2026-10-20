@@ -1,0 +1,818 @@
+{
+  "date": "2026-10-20",
+  "decision": "Keep baseline: no additional resizing or contrast adjustment in production",
+  "reason": "No candidate improves weighted CER; each candidate also exceeds the allowed per-receipt regression on at least one fixture",
+  "scope": "Seven manually redacted existing regression fixtures; these are development data, not an independent holdout",
+  "further_validation": {
+    "status": "not_run",
+    "reason": "All candidates rejected during screening; no candidate selected for validation on the 13 remaining private receipts"
+  },
+  "selection_criteria": {
+    "minimum_absolute_cer_reduction": 0.01,
+    "alternative_minimum_total_time_reduction": 0.15,
+    "alternative_maximum_weighted_cer_increase": 0.005,
+    "maximum_single_sample_cer_increase": 0.03,
+    "required_receipt_totals": 7
+  },
+  "method": {
+    "metric": "Unicode NFC, whitespace collapse, separator-only lines removed; case, punctuation and literal @ preserved",
+    "cer": "Levenshtein distance / reference characters; aggregate weighted by reference length",
+    "timing": "One warm-model trial per image and profile; transformation + lossless PNG encoding + inference. Loading, source JPEG decoding and CER computation excluded.",
+    "timing_limitations": "Single-run timings are indicative, with CPU and cache variability. Quality alone rejects every candidate.",
+    "profile_order": "Seeded shuffle per image; random.Random(20261020)",
+    "warmup": "Load models once, then recognize a blank 640x480 RGB PNG",
+    "pipeline": "EXIF transpose then RGB before the trial. PaddleOCR internal resizing remains at SDK defaults. Orientation-model decisions not evaluated.",
+    "network": "socket connect and connect_ex blocked; all inference used local weights"
+  },
+  "runtime": {
+    "device": "cpu",
+    "cpu_threads": 4,
+    "versions": {
+      "paddleocr": "3.3.2",
+      "paddlepaddle": "3.2.2",
+      "paddlex": "3.3.13"
+    },
+    "models": [
+      {
+        "name": "PP-OCRv5_mobile_det",
+        "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det/resolve/0d63e78e2b680928f6b1747d76a08db6e645efb7",
+        "revision": "0d63e78e2b680928f6b1747d76a08db6e645efb7",
+        "files_sha256": {
+          "inference.json": "05feef1acb00aa4cd7362b15f7f501fc4f99d7b1fa73c1c871e0c7b1504b0f5c",
+          "inference.pdiparams": "afa1820cb16c1fd0dad589d0f8b389139061c1ef6d68019685fd07be997dda5b",
+          "inference.yml": "98069072e1b6b37d727fd9d9f11725faa46d6ea0de012f2ed26caea011c37699"
+        }
+      },
+      {
+        "name": "cyrillic_PP-OCRv5_mobile_rec",
+        "url": "https://huggingface.co/PaddlePaddle/cyrillic_PP-OCRv5_mobile_rec/resolve/712d2d65556ccc1ea7b5d2bb232b018838b6a3ab",
+        "revision": "712d2d65556ccc1ea7b5d2bb232b018838b6a3ab",
+        "files_sha256": {
+          "inference.json": "5d90f1bfca52d80c01de176c5238fae2459995a99ff1dbfe5319ab4ed1735df2",
+          "inference.pdiparams": "434dc9fa2a99fa3653e08f8cf793ae56be7dd41c35c4980e6255147cc02bbc80",
+          "inference.yml": "5c76cc91fa98410178a09f498db10050d0ec1634a660053d3005ab7be581f501"
+        }
+      }
+    ],
+    "additional_versions": {
+      "pillow": "12.3.0",
+      "numpy": "2.5.4",
+      "opencv-contrib-python": "4.10.0.84"
+    },
+    "platform": "Windows AMD64"
+  },
+  "profile_specifications": {
+    "baseline": "RGB pixels unchanged; lossless PNG encoding",
+    "resize_1600": "Pillow thumbnail maximum side 1600, preserve aspect ratio, LANCZOS, never upscale",
+    "upscale_1_5": "Pillow resize dimensions round(original*1.5), LANCZOS",
+    "grayscale": "Pillow ImageOps.grayscale followed by RGB conversion",
+    "contrast_1_3": "Pillow ImageEnhance.Contrast factor 1.3 on RGB",
+    "autocontrast_1": "Pillow grayscale, ImageOps.autocontrast cutoff=1 percent, RGB conversion",
+    "clahe_2": "OpenCV grayscale CLAHE clipLimit=2.0 tileGridSize=(8,8), RGB conversion",
+    "resize_1600_clahe_2": "resize_1600 followed by clahe_2"
+  },
+  "fixture_fingerprints": [
+    {
+      "id": "receipt_001",
+      "image_sha256": "f16cc5096497328b67313af2cb273e17819c91655374b2c1fb0fa2f0a2f26b47",
+      "expected_text_sha256": "9c8b5cf8a7f06b1943d84611d6cde72bf729bf987863b301be591d29968ab1bd"
+    },
+    {
+      "id": "receipt_002",
+      "image_sha256": "b5dc38bc7ecdada7a397f186f641ec01a781ffdb8858235ddf6731384072d399",
+      "expected_text_sha256": "0fe705c9e3ac7c249f3f635e82969bb5a0908e41f0419e3021850ee697215a14"
+    },
+    {
+      "id": "receipt_003",
+      "image_sha256": "a2ff9bc3ebc1d2e023ae3ea45b2ceb02a2e10d75c65d7cf135de027082eb5173",
+      "expected_text_sha256": "0206f429af8def95159eae6f47afd58bc1b259f99e8383f2482c6e48de7ee62c"
+    },
+    {
+      "id": "receipt_004",
+      "image_sha256": "4d2732ceb72a106dd1dde600af866aa38ccdde21a280d64525d20e3908d13f25",
+      "expected_text_sha256": "580af8eaffe1d16577d160f80a57a4a7edc047a31a097a616a376901e253a502"
+    },
+    {
+      "id": "receipt_005",
+      "image_sha256": "e64c2b84f69a260b4f706ee74e2359aefb6ac4b2f594947940e097e6fb726672",
+      "expected_text_sha256": "70daabce491b00451464ac5be3f229eceb39b0537da94be5c5e4faa9162915c8"
+    },
+    {
+      "id": "receipt_006",
+      "image_sha256": "90f8b226cc282813ef540d956564b8ad5492a9bb00af518099f751ced4f47c0e",
+      "expected_text_sha256": "8e2068aa0709f87fb98b5f23185b7eac0a0089b317c94f24965d2272c0b1dbe7"
+    },
+    {
+      "id": "receipt_007",
+      "image_sha256": "c8b86d0c07779d3bd9bbdfcf8e93a650677039311f320e2f1ed0a5614974f904",
+      "expected_text_sha256": "40016f3b100f285dfc226283274dfcaa294eadbe2ac90b680901fc639bb93e20"
+    }
+  ],
+  "summary": {
+    "baseline": {
+      "weighted_cer": 0.26843981354537977,
+      "median_seconds": 2.4476524999990943,
+      "total_seconds": 20.088979200008907,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.0,
+      "weighted_cer_change": -0.0,
+      "relative_total_time": 1.0,
+      "accepted": false
+    },
+    "resize_1600": {
+      "weighted_cer": 0.2854400877433507,
+      "median_seconds": 2.5258220999967307,
+      "total_seconds": 19.062606699990283,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.06521739130434784,
+      "weighted_cer_change": 0.017000274197970955,
+      "relative_total_time": 0.9489086782459226,
+      "accepted": false
+    },
+    "upscale_1_5": {
+      "weighted_cer": 0.26953660542911984,
+      "median_seconds": 4.486124600000039,
+      "total_seconds": 35.720211699990614,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.09557522123893808,
+      "weighted_cer_change": 0.001096791883740067,
+      "relative_total_time": 1.7780998897133995,
+      "accepted": false
+    },
+    "grayscale": {
+      "weighted_cer": 0.28434329585961066,
+      "median_seconds": 2.521932800002105,
+      "total_seconds": 19.7930497999987,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.10869565217391303,
+      "weighted_cer_change": 0.015903482314230888,
+      "relative_total_time": 0.985269067329709,
+      "accepted": false
+    },
+    "contrast_1_3": {
+      "weighted_cer": 0.2876336715108308,
+      "median_seconds": 2.7299197999964235,
+      "total_seconds": 23.91940600000089,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.1008849557522124,
+      "weighted_cer_change": 0.019193857965451033,
+      "relative_total_time": 1.1906730432569856,
+      "accepted": false
+    },
+    "autocontrast_1": {
+      "weighted_cer": 0.2977789964354264,
+      "median_seconds": 2.4472884999995586,
+      "total_seconds": 20.442381500004558,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.10869565217391303,
+      "weighted_cer_change": 0.02933918289004661,
+      "relative_total_time": 1.0175918495647351,
+      "accepted": false
+    },
+    "clahe_2": {
+      "weighted_cer": 0.3073759254181519,
+      "median_seconds": 2.533432400006859,
+      "total_seconds": 19.792751399996632,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.09420289855072467,
+      "weighted_cer_change": 0.03893611187277213,
+      "relative_total_time": 0.9852542134140821,
+      "accepted": false
+    },
+    "resize_1600_clahe_2": {
+      "weighted_cer": 0.30655333150534686,
+      "median_seconds": 2.1917526999968686,
+      "total_seconds": 17.081990699996823,
+      "totals_found": 7,
+      "worst_sample_cer_increase": 0.05743243243243244,
+      "weighted_cer_change": 0.03811351795996709,
+      "relative_total_time": 0.8503165108553276,
+      "accepted": false
+    }
+  },
+  "observations": [
+    "receipt_003 baseline contains both character errors and fragmented/reordered table text",
+    "receipt_004 contrast_1_3 yields token F1=1.0 while CER=0.4286: sequence CER also penalizes fragment order",
+    "Confidence improvements do not establish transcription improvements",
+    "All 56 runs returned nonempty OCR text and recognized the expected total",
+    "Original images, transcriptions and CER baselines remain unchanged"
+  ],
+  "records": [
+    {
+      "id": "receipt_001",
+      "profile": "contrast_1_3",
+      "cer": 0.06418918918918919,
+      "reference_characters": 592,
+      "seconds": 2.7299197999964235,
+      "preprocess_seconds": 0.12927460000355495,
+      "confidence": 0.9279801307654962,
+      "token_f1": 0.9107142857142857,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "baseline",
+      "cer": 0.06418918918918919,
+      "reference_characters": 592,
+      "seconds": 2.225691400002688,
+      "preprocess_seconds": 0.0828347999995458,
+      "confidence": 0.9292934013576042,
+      "token_f1": 0.9107142857142857,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "grayscale",
+      "cer": 0.09797297297297297,
+      "reference_characters": 592,
+      "seconds": 2.2212337000019033,
+      "preprocess_seconds": 0.07169029999931809,
+      "confidence": 0.9302373194113011,
+      "token_f1": 0.8928571428571429,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "resize_1600",
+      "cer": 0.06418918918918919,
+      "reference_characters": 592,
+      "seconds": 3.1626265999948373,
+      "preprocess_seconds": 0.07839979999698699,
+      "confidence": 0.9292934013576042,
+      "token_f1": 0.9107142857142857,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "upscale_1_5",
+      "cer": 0.04054054054054054,
+      "reference_characters": 592,
+      "seconds": 3.1973349999971106,
+      "preprocess_seconds": 0.23230759999569273,
+      "confidence": 0.9287685911829878,
+      "token_f1": 0.9107142857142857,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "clahe_2",
+      "cer": 0.12162162162162163,
+      "reference_characters": 592,
+      "seconds": 2.258195499998692,
+      "preprocess_seconds": 0.07939079999778187,
+      "confidence": 0.9336766513382516,
+      "token_f1": 0.9017857142857143,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "autocontrast_1",
+      "cer": 0.0929054054054054,
+      "reference_characters": 592,
+      "seconds": 2.2736662000024808,
+      "preprocess_seconds": 0.07531620000372641,
+      "confidence": 0.9279849340276021,
+      "token_f1": 0.9107142857142857,
+      "total_found": true
+    },
+    {
+      "id": "receipt_001",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.12162162162162163,
+      "reference_characters": 592,
+      "seconds": 2.2194988999981433,
+      "preprocess_seconds": 0.07455559999652905,
+      "confidence": 0.9336766513382516,
+      "token_f1": 0.9017857142857143,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "autocontrast_1",
+      "cer": 0.39021164021164023,
+      "reference_characters": 1512,
+      "seconds": 6.231851399999869,
+      "preprocess_seconds": 0.23949699999502627,
+      "confidence": 0.7707192464771434,
+      "token_f1": 0.7508650519031141,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "contrast_1_3",
+      "cer": 0.375,
+      "reference_characters": 1512,
+      "seconds": 9.182257100001152,
+      "preprocess_seconds": 0.3071831000052043,
+      "confidence": 0.7642862897003646,
+      "token_f1": 0.7173144876325088,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "grayscale",
+      "cer": 0.3855820105820106,
+      "reference_characters": 1512,
+      "seconds": 5.786876300000586,
+      "preprocess_seconds": 0.2358886000001803,
+      "confidence": 0.7691911347534346,
+      "token_f1": 0.7422680412371134,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "upscale_1_5",
+      "cer": 0.3531746031746032,
+      "reference_characters": 1512,
+      "seconds": 8.404038600005151,
+      "preprocess_seconds": 0.7542955000026268,
+      "confidence": 0.7687206955875937,
+      "token_f1": 0.7668393782383419,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "clahe_2",
+      "cer": 0.414021164021164,
+      "reference_characters": 1512,
+      "seconds": 5.626544599996123,
+      "preprocess_seconds": 0.22933509999711532,
+      "confidence": 0.7723828501139696,
+      "token_f1": 0.75,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "resize_1600",
+      "cer": 0.4060846560846561,
+      "reference_characters": 1512,
+      "seconds": 5.427379900000233,
+      "preprocess_seconds": 0.23196140000072774,
+      "confidence": 0.7460736837397274,
+      "token_f1": 0.7102473498233216,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "baseline",
+      "cer": 0.37037037037037035,
+      "reference_characters": 1512,
+      "seconds": 6.095111700000416,
+      "preprocess_seconds": 0.29043559999990975,
+      "confidence": 0.7705226347583239,
+      "token_f1": 0.7353951890034365,
+      "total_found": true
+    },
+    {
+      "id": "receipt_002",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.42592592592592593,
+      "reference_characters": 1512,
+      "seconds": 4.86359590000211,
+      "preprocess_seconds": 0.20162730000447482,
+      "confidence": 0.7536835250101591,
+      "token_f1": 0.6833631484794276,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "autocontrast_1",
+      "cer": 0.5942028985507246,
+      "reference_characters": 138,
+      "seconds": 1.960102299999562,
+      "preprocess_seconds": 0.2921767000007094,
+      "confidence": 0.8854629776694558,
+      "token_f1": 0.4897959183673469,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "contrast_1_3",
+      "cer": 0.5797101449275363,
+      "reference_characters": 138,
+      "seconds": 1.9679759999999078,
+      "preprocess_seconds": 0.32666900000185706,
+      "confidence": 0.776624294427725,
+      "token_f1": 0.5384615384615384,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "upscale_1_5",
+      "cer": 0.4057971014492754,
+      "reference_characters": 138,
+      "seconds": 4.056207899993751,
+      "preprocess_seconds": 0.9506323999958113,
+      "confidence": 0.8596173326174418,
+      "token_f1": 0.78125,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "clahe_2",
+      "cer": 0.5797101449275363,
+      "reference_characters": 138,
+      "seconds": 1.624373899998318,
+      "preprocess_seconds": 0.27180099999532104,
+      "confidence": 0.8742690844969316,
+      "token_f1": 0.4897959183673469,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "baseline",
+      "cer": 0.4855072463768116,
+      "reference_characters": 138,
+      "seconds": 1.9515765000032843,
+      "preprocess_seconds": 0.3292841000002227,
+      "confidence": 0.861195458815648,
+      "token_f1": 0.6666666666666666,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "grayscale",
+      "cer": 0.5942028985507246,
+      "reference_characters": 138,
+      "seconds": 1.6538244999974268,
+      "preprocess_seconds": 0.31102699999610195,
+      "confidence": 0.8853218284520236,
+      "token_f1": 0.5306122448979592,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.463768115942029,
+      "reference_characters": 138,
+      "seconds": 1.6293375999957789,
+      "preprocess_seconds": 0.2178308999937144,
+      "confidence": 0.855266103377709,
+      "token_f1": 0.5818181818181818,
+      "total_found": true
+    },
+    {
+      "id": "receipt_003",
+      "profile": "resize_1600",
+      "cer": 0.5507246376811594,
+      "reference_characters": 138,
+      "seconds": 1.3651871000038227,
+      "preprocess_seconds": 0.25095560000045225,
+      "confidence": 0.8883379155939276,
+      "token_f1": 0.52,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "grayscale",
+      "cer": 0.4117647058823529,
+      "reference_characters": 119,
+      "seconds": 1.7830744000020786,
+      "preprocess_seconds": 0.2859995000035269,
+      "confidence": 0.9275610327720643,
+      "token_f1": 1.0,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "contrast_1_3",
+      "cer": 0.42857142857142855,
+      "reference_characters": 119,
+      "seconds": 1.7780726000055438,
+      "preprocess_seconds": 0.29517910000140546,
+      "confidence": 0.9011241793632507,
+      "token_f1": 1.0,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.5126050420168067,
+      "reference_characters": 119,
+      "seconds": 1.3428245000031893,
+      "preprocess_seconds": 0.2139099000050919,
+      "confidence": 0.9118907749652863,
+      "token_f1": 0.8627450980392157,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "autocontrast_1",
+      "cer": 0.42857142857142855,
+      "reference_characters": 119,
+      "seconds": 2.038607400005276,
+      "preprocess_seconds": 0.2986598000061349,
+      "confidence": 0.8742174722931602,
+      "token_f1": 0.9811320754716981,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "resize_1600",
+      "cer": 0.4117647058823529,
+      "reference_characters": 119,
+      "seconds": 1.4134867999964627,
+      "preprocess_seconds": 0.28363160000299104,
+      "confidence": 0.9220653474330902,
+      "token_f1": 1.0,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "clahe_2",
+      "cer": 0.42016806722689076,
+      "reference_characters": 119,
+      "seconds": 1.79240359999676,
+      "preprocess_seconds": 0.25194969999574823,
+      "confidence": 0.9230279445648193,
+      "token_f1": 0.9230769230769231,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "baseline",
+      "cer": 0.47058823529411764,
+      "reference_characters": 119,
+      "seconds": 1.859418200001528,
+      "preprocess_seconds": 0.30665810000209603,
+      "confidence": 0.8506978235461495,
+      "token_f1": 0.8679245283018868,
+      "total_found": true
+    },
+    {
+      "id": "receipt_004",
+      "profile": "upscale_1_5",
+      "cer": 0.42857142857142855,
+      "reference_characters": 119,
+      "seconds": 3.682789300000877,
+      "preprocess_seconds": 0.8450038000009954,
+      "confidence": 0.9108385010199114,
+      "token_f1": 0.9230769230769231,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "contrast_1_3",
+      "cer": 0.44778761061946903,
+      "reference_characters": 565,
+      "seconds": 2.940614799998002,
+      "preprocess_seconds": 0.3445696999988286,
+      "confidence": 0.7769420707509631,
+      "token_f1": 0.7010309278350515,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "baseline",
+      "cer": 0.34690265486725663,
+      "reference_characters": 565,
+      "seconds": 3.0241242999982205,
+      "preprocess_seconds": 0.25728309999976773,
+      "confidence": 0.7751867118033957,
+      "token_f1": 0.7403846153846154,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "autocontrast_1",
+      "cer": 0.3663716814159292,
+      "reference_characters": 565,
+      "seconds": 2.9778054999987944,
+      "preprocess_seconds": 0.21936709999863524,
+      "confidence": 0.7711524721235037,
+      "token_f1": 0.7559808612440191,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "clahe_2",
+      "cer": 0.36991150442477877,
+      "reference_characters": 565,
+      "seconds": 3.409494400002586,
+      "preprocess_seconds": 0.23990210000192747,
+      "confidence": 0.8217909622192383,
+      "token_f1": 0.7314814814814815,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "resize_1600",
+      "cer": 0.3663716814159292,
+      "reference_characters": 565,
+      "seconds": 2.8750345000007655,
+      "preprocess_seconds": 0.22190349999436876,
+      "confidence": 0.7910365259393732,
+      "token_f1": 0.751219512195122,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "upscale_1_5",
+      "cer": 0.4424778761061947,
+      "reference_characters": 565,
+      "seconds": 4.874814899994817,
+      "preprocess_seconds": 0.710987299993576,
+      "confidence": 0.7614496162404185,
+      "token_f1": 0.7076923076923077,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "grayscale",
+      "cer": 0.35575221238938054,
+      "reference_characters": 565,
+      "seconds": 3.2205915999948047,
+      "preprocess_seconds": 0.21152079999592388,
+      "confidence": 0.7997230260956044,
+      "token_f1": 0.7523809523809524,
+      "total_found": true
+    },
+    {
+      "id": "receipt_005",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.3805309734513274,
+      "reference_characters": 565,
+      "seconds": 2.791639099996246,
+      "preprocess_seconds": 0.20085829999879934,
+      "confidence": 0.8118784743196824,
+      "token_f1": 0.7281553398058253,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.07428571428571429,
+      "reference_characters": 350,
+      "seconds": 2.043342000004486,
+      "preprocess_seconds": 0.22999870000057854,
+      "confidence": 0.8801118999719619,
+      "token_f1": 0.8793103448275862,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "grayscale",
+      "cer": 0.07714285714285714,
+      "reference_characters": 350,
+      "seconds": 2.605516499999794,
+      "preprocess_seconds": 0.2682786000004853,
+      "confidence": 0.8822380810976028,
+      "token_f1": 0.8620689655172413,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "upscale_1_5",
+      "cer": 0.08285714285714285,
+      "reference_characters": 350,
+      "seconds": 7.018901399998867,
+      "preprocess_seconds": 0.8223562999992282,
+      "confidence": 0.8779732178558003,
+      "token_f1": 0.8103448275862069,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "contrast_1_3",
+      "cer": 0.06571428571428571,
+      "reference_characters": 350,
+      "seconds": 2.4817649999968125,
+      "preprocess_seconds": 0.35544559999834746,
+      "confidence": 0.8905665040016174,
+      "token_f1": 0.8620689655172413,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "baseline",
+      "cer": 0.07142857142857142,
+      "reference_characters": 350,
+      "seconds": 2.485404600003676,
+      "preprocess_seconds": 0.3206930000014836,
+      "confidence": 0.8996337481907436,
+      "token_f1": 0.8275862068965517,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "resize_1600",
+      "cer": 0.06571428571428571,
+      "reference_characters": 350,
+      "seconds": 2.2930696999974316,
+      "preprocess_seconds": 0.23269920000166167,
+      "confidence": 0.8905083358287811,
+      "token_f1": 0.8793103448275862,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "clahe_2",
+      "cer": 0.1457142857142857,
+      "reference_characters": 350,
+      "seconds": 2.533432400006859,
+      "preprocess_seconds": 0.25314150000485824,
+      "confidence": 0.88815286613646,
+      "token_f1": 0.8620689655172413,
+      "total_found": true
+    },
+    {
+      "id": "receipt_006",
+      "profile": "autocontrast_1",
+      "cer": 0.07142857142857142,
+      "reference_characters": 350,
+      "seconds": 2.4472884999995586,
+      "preprocess_seconds": 0.2643166999987443,
+      "confidence": 0.8835449337959289,
+      "token_f1": 0.8793103448275862,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "contrast_1_3",
+      "cer": 0.09973045822102426,
+      "reference_characters": 371,
+      "seconds": 2.8388007000030484,
+      "preprocess_seconds": 0.3006450000029872,
+      "confidence": 0.9065204958120981,
+      "token_f1": 0.8606060606060606,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "baseline",
+      "cer": 0.09973045822102426,
+      "reference_characters": 371,
+      "seconds": 2.4476524999990943,
+      "preprocess_seconds": 0.2717357000001357,
+      "confidence": 0.9070220788319906,
+      "token_f1": 0.8502994011976048,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "autocontrast_1",
+      "cer": 0.20485175202156333,
+      "reference_characters": 371,
+      "seconds": 2.5130601999990176,
+      "preprocess_seconds": 0.23873059999459656,
+      "confidence": 0.9207546659878322,
+      "token_f1": 0.75,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "clahe_2",
+      "cer": 0.0889487870619946,
+      "reference_characters": 371,
+      "seconds": 2.548306999997294,
+      "preprocess_seconds": 0.23551679999945918,
+      "confidence": 0.9051091739109585,
+      "token_f1": 0.8484848484848485,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "upscale_1_5",
+      "cer": 0.10512129380053908,
+      "reference_characters": 371,
+      "seconds": 4.486124600000039,
+      "preprocess_seconds": 0.8205760000055307,
+      "confidence": 0.9165493914059231,
+      "token_f1": 0.8433734939759037,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "grayscale",
+      "cer": 0.09973045822102426,
+      "reference_characters": 371,
+      "seconds": 2.521932800002105,
+      "preprocess_seconds": 0.250928000001295,
+      "confidence": 0.9116744879219267,
+      "token_f1": 0.8383233532934131,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "resize_1600",
+      "cer": 0.09164420485175202,
+      "reference_characters": 371,
+      "seconds": 2.5258220999967307,
+      "preprocess_seconds": 0.23718530000041937,
+      "confidence": 0.8972587866915597,
+      "token_f1": 0.8363636363636363,
+      "total_found": true
+    },
+    {
+      "id": "receipt_007",
+      "profile": "resize_1600_clahe_2",
+      "cer": 0.09703504043126684,
+      "reference_characters": 371,
+      "seconds": 2.1917526999968686,
+      "preprocess_seconds": 0.21184969999740133,
+      "confidence": 0.9052154736386405,
+      "token_f1": 0.8363636363636363,
+      "total_found": true
+    }
+  ]
+}

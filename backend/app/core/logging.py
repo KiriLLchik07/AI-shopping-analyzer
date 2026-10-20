@@ -76,10 +76,7 @@ def configure_logging() -> None:
 
     handler_name = "application_console"
 
-    if not any(
-        handler.get_name() == handler_name
-        for handler in root_logger.handlers
-    ):
+    if not any(handler.get_name() == handler_name for handler in root_logger.handlers):
         handler = logging.StreamHandler(sys.stdout)
         handler.set_name(handler_name)
         handler.setLevel(logging.INFO)
