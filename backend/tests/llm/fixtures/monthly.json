@@ -1,0 +1,17 @@
+{
+  "timezone": "Asia/Omsk",
+  "current": {"date_from": "2026-09-01", "date_to": "2026-09-30", "total_amount": "5000.00", "purchase_count": 10},
+  "previous": {"date_from": "2026-08-01", "date_to": "2026-08-31", "total_amount": "4000.00", "purchase_count": 8},
+  "categories": [
+    {"category_name": "продукты", "total_amount": "3000.00", "purchase_count": 6},
+    {"category_name": "кафе", "total_amount": "2000.00", "purchase_count": 4}
+  ],
+  "weekly_trends": [
+    {"bucket_start": "2026-08-31", "total_amount": "1000.00", "purchase_count": 2},
+    {"bucket_start": "2026-09-07", "total_amount": "1000.00", "purchase_count": 2},
+    {"bucket_start": "2026-09-14", "total_amount": "1000.00", "purchase_count": 2},
+    {"bucket_start": "2026-09-21", "total_amount": "1000.00", "purchase_count": 2},
+    {"bucket_start": "2026-09-28", "total_amount": "1000.00", "purchase_count": 2}
+  ],
+  "rules": ["Расходы на кафе — до 1500 ₽ в месяц"]
+}

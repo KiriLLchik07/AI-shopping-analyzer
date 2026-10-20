@@ -38,6 +38,7 @@ pythonpath = [".."]
 markers = [
     "integration: requires isolated PostgreSQL and Redis services",
     "ocr: real local CPU inference; enable with RUN_OCR_TESTS=1",
+    "llm: real local Ollama generation; enable with RUN_LLM_TESTS=1",
 ]
 
 [dependency-groups]

@@ -9,9 +9,11 @@ load_dotenv(TESTS_ROOT / ".env.test", override=True)
 
 
 def pytest_collection_modifyitems(items):
-    if os.getenv("RUN_OCR_TESTS") == "1":
-        return
-    skip = pytest.mark.skip(reason="Set RUN_OCR_TESTS=1 to run real local OCR")
     for item in items:
-        if item.get_closest_marker("ocr") is not None:
-            item.add_marker(skip)
+        for marker, flag in (("ocr", "RUN_OCR_TESTS"), ("llm", "RUN_LLM_TESTS")):
+            if item.get_closest_marker(marker) is not None and os.getenv(flag) != "1":
+                item.add_marker(
+                    pytest.mark.skip(
+                        reason=f"Set {flag}=1 to run real local {marker.upper()}"
+                    )
+                )
