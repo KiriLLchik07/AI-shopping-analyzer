@@ -2,8 +2,10 @@ from calendar import monthrange
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Annotated, Literal, Self
+from uuid import UUID
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -139,3 +141,22 @@ class MonthlyReportResult(ReportDto):
     recommendations: tuple[ReportRecommendation, ...] = Field(
         min_length=3, max_length=5
     )
+
+
+class LlmProviderInfo(ReportDto):
+    provider_name: str = Field(min_length=1, max_length=64, pattern=r"\S")
+    model_name: str = Field(min_length=1, max_length=128, pattern=r"\S")
+
+
+class LlmReportResponse(LlmProviderInfo):
+    model_config = ConfigDict(from_attributes=True)
+
+    report_id: UUID
+    period_start: date
+    period_end: date
+    timezone: str
+    input_data: MonthlyReportData
+    report_data: MonthlyReportResult
+    prompt_version: str
+    schema_version: str
+    created_at: AwareDatetime

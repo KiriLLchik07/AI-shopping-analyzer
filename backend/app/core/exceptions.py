@@ -107,3 +107,11 @@ class ReceiptProcessingConflictError(ConflictError):
         "Receipt already contains items. "
         "Automatic processing cannot replace them without an explicit reprocess."
     )
+
+
+class LlmReportInputError(ApplicationError):
+    default_detail = "Не удалось подготовить данные отчёта. Проверьте период и активные пользовательские правила."
+
+
+class LlmReportStorageUnavailableError(ApplicationError):
+    default_detail = "Не удалось прочитать или сохранить отчёт. Попробуйте позже."
