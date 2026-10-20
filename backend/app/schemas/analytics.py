@@ -1,7 +1,9 @@
 import re
 from datetime import date, datetime
+from decimal import Decimal
 from enum import StrEnum
-from typing import Self
+from typing import Annotated, Self
+from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import (
@@ -93,3 +95,87 @@ class ResolvedAnalyticsPeriod(BaseModel):
     end_at: AwareDatetime = Field(
         description="Конец SQL-диапазона в UTC исключительно."
     )
+
+
+class ProductSort(StrEnum):
+    AMOUNT = "amount"
+    FREQUENCY = "frequency"
+
+
+class TrendGroup(StrEnum):
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+
+class AnalyticsLimitParams(AnalyticsPeriodParams):
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class AnalyticsProductsParams(AnalyticsLimitParams):
+    sort_by: ProductSort = ProductSort.AMOUNT
+
+
+class AnalyticsTrendsParams(AnalyticsPeriodParams):
+    group_by: TrendGroup = TrendGroup.DAY
+
+
+AnalyticsMoney = Annotated[Decimal, Field(ge=0, allow_inf_nan=False)]
+PurchaseCount = Annotated[int, Field(ge=0, description="Количество разных чеков.")]
+
+
+class AnalyticsSummaryResponse(BaseModel):
+    period: ResolvedAnalyticsPeriod
+    total_amount: AnalyticsMoney
+    purchase_count: PurchaseCount
+
+
+class CategoryAnalyticsItem(BaseModel):
+    category_id: UUID | None
+    category_name: str
+    total_amount: AnalyticsMoney
+    purchase_count: PurchaseCount
+
+
+class AnalyticsCategoriesResponse(BaseModel):
+    period: ResolvedAnalyticsPeriod
+    items: list[CategoryAnalyticsItem]
+
+
+class ProductAnalyticsItem(BaseModel):
+    product_name: str
+    total_amount: AnalyticsMoney
+    purchase_count: PurchaseCount
+
+
+class AnalyticsProductsResponse(BaseModel):
+    period: ResolvedAnalyticsPeriod
+    sort_by: ProductSort
+    limit: int
+    items: list[ProductAnalyticsItem]
+
+
+class StoreAnalyticsItem(BaseModel):
+    store_name: str | None
+    total_amount: AnalyticsMoney
+    purchase_count: PurchaseCount
+
+
+class AnalyticsStoresResponse(BaseModel):
+    period: ResolvedAnalyticsPeriod
+    limit: int
+    items: list[StoreAnalyticsItem]
+
+
+class TrendAnalyticsPoint(BaseModel):
+    bucket_start: date = Field(
+        description="Начало календарного интервала в выбранном часовом поясе; неделя начинается с понедельника."
+    )
+    total_amount: AnalyticsMoney
+    purchase_count: PurchaseCount
+
+
+class AnalyticsTrendsResponse(BaseModel):
+    period: ResolvedAnalyticsPeriod
+    group_by: TrendGroup
+    points: list[TrendAnalyticsPoint]
