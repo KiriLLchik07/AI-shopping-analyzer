@@ -23,3 +23,4 @@ backend/test.py
 backend/data/private
 /backend/models/
 /backend/.uv-cache/
+/backend/benchmarks/

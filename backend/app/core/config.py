@@ -69,6 +69,27 @@ class MetricsSettings(BaseSettings):
     )
 
 
+class AnalyticsSettings(BaseSettings):
+    timezone: str = "Asia/Omsk"
+    max_period_days: int = Field(default=366, ge=1, le=36600)
+
+    model_config = SettingsConfigDict(
+        env_prefix="ANALYTICS_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as error:
+            raise ValueError("ANALYTICS_TIMEZONE must be an IANA timezone") from error
+        return value
+
+
 class ParsingSettings(BaseSettings):
     timezone: str | None = None
     total_tolerance: Decimal = Field(
@@ -153,3 +174,4 @@ image_settings = ImageSettings()
 ocr_settings = OcrSettings()
 metrics_settings = MetricsSettings()
 parsing_settings = ParsingSettings()
+analytics_settings = AnalyticsSettings()

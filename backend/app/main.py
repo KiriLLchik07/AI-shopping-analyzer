@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import PlainTextResponse
 
+from backend.app.api.analytics import router as analytics_router
 from backend.app.api.auth import router as auth_router
 from backend.app.api.categories import router as category_router
 from backend.app.api.exception_handlers import register_exception_handlers
@@ -22,6 +23,7 @@ app.include_router(health_router)
 app.include_router(processing_metrics_router)
 app.include_router(receipts_router)
 app.include_router(category_router)
+app.include_router(analytics_router)
 
 register_exception_handlers(app)
 
