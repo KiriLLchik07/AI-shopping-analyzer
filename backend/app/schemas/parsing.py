@@ -23,12 +23,15 @@ class ParsedReceiptItem(BaseModel):
     confidence: Confidence | None = None
 
 
-class ReceiptParsingResult(BaseModel):
+class ReceiptParsingReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    raw_ocr_text: str
     store_name: NonBlankText | None = None
     purchase_datetime: datetime | None = None
     total_amount: Amount | None = None
-    items: tuple[ParsedReceiptItem, ...] = ()
     warnings: tuple[NonBlankText, ...] = ()
+
+
+class ReceiptParsingResult(ReceiptParsingReport):
+    raw_ocr_text: str
+    items: tuple[ParsedReceiptItem, ...] = ()

@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
 
-from backend.app.core.config import image_settings
+from backend.app.core.config import image_settings, parsing_settings
 from backend.app.image_processing.factory import get_image_orientation_normalizer
 from backend.app.image_processing.orientation import ImageOrientationNormalizer
 from backend.app.ocr.exceptions import OcrConfigurationError
 from backend.app.ocr.factory import get_ocr_provider
 from backend.app.ocr.interface import OcrProvider
+from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.processing import (
     ReceiptPreprocessingResult,
@@ -44,10 +45,12 @@ class UnconfiguredReceiptPipeline(ReceiptPipeline):
         object_storage: ObjectStorage,
         orientation_normalizer: ImageOrientationNormalizer,
         ocr_provider: OcrProvider | None = None,
+        parser: ReceiptParser | None = None,
     ) -> None:
         self.object_storage = object_storage
         self.orientation_normalizer = orientation_normalizer
         self.ocr_provider = ocr_provider
+        self.parser = parser if parser is not None else ReceiptParser()
 
     def preprocess(self, source: ReceiptProcessingInput) -> bytes:
         return self.preprocess_with_metadata(source).image
@@ -72,7 +75,11 @@ class UnconfiguredReceiptPipeline(ReceiptPipeline):
         return self.ocr_provider.recognize(image)
 
     def parse(self, raw_text: str) -> ReceiptProcessingResult:
-        raise NotImplementedError("Receipt parsing is not implemented yet")
+        return ReceiptProcessingResult(
+            raw_ocr_text=raw_text,
+            items=(),
+            parsed_receipt=self.parser.parse(raw_text),
+        )
 
 
 def get_receipt_pipeline() -> ReceiptPipeline:
@@ -80,4 +87,5 @@ def get_receipt_pipeline() -> ReceiptPipeline:
         object_storage=get_object_storage(),
         orientation_normalizer=get_image_orientation_normalizer(),
         ocr_provider=get_ocr_provider(),
+        parser=ReceiptParser(timezone=parsing_settings.timezone),
     )

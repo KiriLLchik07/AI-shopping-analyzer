@@ -3,6 +3,8 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+from backend.app.db.base import Base
+from backend.app.models.enums import ReceiptStatus
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -20,9 +22,6 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from backend.app.db.base import Base
-from backend.app.models.enums import ReceiptStatus
 
 if TYPE_CHECKING:
     from backend.app.models.user import User
@@ -51,6 +50,7 @@ class Receipt(Base):
     raw_ocr_text: Mapped[str | None] = mapped_column(Text)
     ocr_confidence: Mapped[float | None] = mapped_column(Float)
     orientation_report: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
+    parsing_report: Mapped[dict | None] = mapped_column(JSON(none_as_null=True))
     status: Mapped[ReceiptStatus] = mapped_column(
         Enum(
             ReceiptStatus,
