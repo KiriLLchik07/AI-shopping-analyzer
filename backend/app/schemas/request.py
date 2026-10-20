@@ -107,7 +107,7 @@ class ReceiptItemUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     raw_name: str | None = Field(default=None, min_length=1, max_length=256)
-    normalized_name: str | None = Field(default=None, max_length=256)
+    normalized_name: str | None = Field(default=None, min_length=1, max_length=256)
     category_id: UUID | None = None
     quantity: ItemQuantity | None = None
     unit: str | None = Field(default=None, max_length=100)
@@ -117,6 +117,11 @@ class ReceiptItemUpdateRequest(BaseModel):
     discount_amount: Decimal | None = Field(default=None, ge=0)
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool | None = None
+
+    @field_validator("raw_name", "normalized_name", mode="before")
+    @classmethod
+    def strip_item_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def validate_update(self) -> Self:
