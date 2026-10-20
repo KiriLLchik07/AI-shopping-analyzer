@@ -82,7 +82,7 @@ class ReceiptRepository:
         )
 
         if for_update:
-            query = query.with_for_update()
+            query = query.with_for_update().execution_options(populate_existing=True)
         return self.db_session.scalars(query).one_or_none()
 
     def update_receipt(
@@ -92,6 +92,9 @@ class ReceiptRepository:
         for field, value in update_data.items():
             setattr(receipt, field, value)
 
+        receipt.manually_updated_fields = sorted(
+            set(receipt.manually_updated_fields or ()) | update_data.keys()
+        )
         self.db_session.flush()
         return receipt
 

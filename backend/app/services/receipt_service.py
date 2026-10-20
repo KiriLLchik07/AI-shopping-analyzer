@@ -87,7 +87,7 @@ class ReceiptService:
     def update_receipt(
         self, payload: ReceiptUpdateRequest, receipt_id: UUID, user_id: UUID
     ) -> Receipt:
-        receipt = self.get_receipt_by_id(receipt_id, user_id)
+        receipt = self.get_receipt_by_id(receipt_id, user_id, for_update=True)
 
         update_data = payload.model_dump(exclude_unset=True)
 

@@ -15,12 +15,13 @@ from backend.app.models.enums import ReceiptStatus
 from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.app.schemas.ocr import OcrFragment, OcrResult
 from backend.app.schemas.processing import ReceiptProcessingResult
-from backend.app.schemas.request import ReceiptItemCreateRequest
+from backend.app.schemas.request import ReceiptItemCreateRequest, ReceiptUpdateRequest
 from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
 from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
     SaveProcessingOutcome,
 )
+from backend.app.services.receipt_service import ReceiptService
 from backend.app.workers import jobs
 
 pytestmark = pytest.mark.integration
@@ -142,6 +143,101 @@ def test_parser_does_not_overwrite_existing_metadata(receipt_owner, monkeypatch)
         assert receipt.total_amount == Decimal("123.45")
         assert receipt.purchase_datetime == corrected_datetime
         assert receipt.parsing_report["total_amount"] == "3240.00"
+
+
+@pytest.mark.parametrize("field", ["store_name", "purchase_datetime", "total_amount"])
+@pytest.mark.parametrize("clear", [False, True])
+@pytest.mark.parametrize("timing", ["before_reprocess", "during_processing"])
+def test_reprocess_preserves_explicit_manual_metadata(
+    receipt_owner, client, monkeypatch, field, clear, timing
+):
+    receipt_id, user = receipt_owner
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    service = ReceiptProcessingService(SessionLocal)
+    service.save_result(receipt_id, pipeline().parse(TEXT))
+    values = {
+        "store_name": "Исправленный магазин",
+        "purchase_datetime": "2026-10-19T12:00:00Z",
+        "total_amount": "123.45",
+    }
+    value = None if clear else values[field]
+
+    def edit():
+        response = client.patch(f"/api/receipts/{receipt_id}", json={field: value})
+        assert response.status_code == 200
+        return response.json()[field]
+
+    expected = edit() if timing == "before_reprocess" else None
+    ticket = service.prepare_process(receipt_id, user.user_id, replace_items=True)
+    worker_pipeline = pipeline()
+    original_parse = worker_pipeline.parse
+
+    def parse_after_edit(raw_text):
+        nonlocal expected
+        if timing == "during_processing":
+            expected = edit()
+        return original_parse(raw_text)
+
+    monkeypatch.setattr(worker_pipeline, "parse", parse_after_edit)
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: worker_pipeline)
+    jobs.process_receipt(str(receipt_id), processing_version=ticket.processing_version)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    assert response.json()[field] == expected
+    assert response.json()["status"] == "need_review"
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.manually_updated_fields == [field]
+        assert receipt.parsing_report[field] is not None
+        assert receipt.processing_result_saved_at is not None
+
+    next_ticket = service.prepare_process(receipt_id, user.user_id, replace_items=True)
+    monkeypatch.setattr(worker_pipeline, "parse", original_parse)
+    jobs.process_receipt(
+        str(receipt_id), processing_version=next_ticket.processing_version
+    )
+    assert client.get(f"/api/receipts/{receipt_id}").json()[field] == expected
+
+
+def test_only_explicitly_edited_fields_are_protected_and_marks_accumulate(
+    receipt_owner, client, monkeypatch
+):
+    receipt_id, user = receipt_owner
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    url = f"/api/receipts/{receipt_id}"
+    assert client.patch(url, json={"store_name": None}).status_code == 200
+    assert client.patch(url, json={"payment_type": "Наличные"}).status_code == 200
+    assert client.patch(url, json={"store_name": None}).status_code == 200
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", pipeline)
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.manually_updated_fields == ["payment_type", "store_name"]
+        assert receipt.store_name is None
+        assert receipt.payment_type == "Наличные"
+        assert receipt.total_amount == Decimal("3240.00")
+        assert receipt.purchase_datetime is not None
+
+
+def test_manual_update_refreshes_preloaded_receipt_and_keeps_other_field_marks(
+    receipt_owner,
+):
+    receipt_id, user = receipt_owner
+    with SessionLocal() as stale_session:
+        stale = stale_session.get(Receipt, receipt_id)
+        assert stale.manually_updated_fields == []
+        with SessionLocal() as session:
+            ReceiptService(session).update_receipt(
+                ReceiptUpdateRequest(store_name="Исправлено"), receipt_id, user.user_id
+            )
+        ReceiptService(stale_session).update_receipt(
+            ReceiptUpdateRequest(total_amount=None), receipt_id, user.user_id
+        )
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.store_name == "Исправлено"
+        assert receipt.total_amount is None
+        assert receipt.manually_updated_fields == ["store_name", "total_amount"]
 
 
 def test_stale_and_duplicate_results_cannot_replace_metadata(receipt_owner):

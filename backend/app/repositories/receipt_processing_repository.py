@@ -2,14 +2,15 @@ from collections.abc import Sequence
 from datetime import datetime
 from uuid import UUID
 
+from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
+
 from backend.app.models import Receipt, ReceiptItem
 from backend.app.models.enums import ReceiptStatus
 from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.parsing import ReceiptParsingResult
-from sqlalchemy import delete, select
-from sqlalchemy.orm import Session
 
 
 class ReceiptProcessingRepository:
@@ -129,13 +130,15 @@ class ReceiptProcessingRepository:
             receipt.parsing_report = parsed_receipt.model_dump(
                 mode="json", exclude={"raw_ocr_text", "items"}
             )
-            if receipt.store_name is None:
+            manual_fields = set(receipt.manually_updated_fields or ())
+            if receipt.store_name is None and "store_name" not in manual_fields:
                 receipt.store_name = parsed_receipt.store_name
-            if receipt.total_amount is None:
+            if receipt.total_amount is None and "total_amount" not in manual_fields:
                 receipt.total_amount = parsed_receipt.total_amount
             purchased_at = parsed_receipt.purchase_datetime
             if (
                 receipt.purchase_datetime is None
+                and "purchase_datetime" not in manual_fields
                 and purchased_at is not None
                 and purchased_at.utcoffset() is not None
             ):
