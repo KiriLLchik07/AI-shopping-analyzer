@@ -1,7 +1,7 @@
 import itertools
 from pathlib import Path
 
-from pydantic import Field, PositiveInt, field_validator
+from pydantic import Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +48,19 @@ class OcrSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="OCR_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
+class MetricsSettings(BaseSettings):
+    access_token: SecretStr | None = None
+    retention_days: int = Field(default=30, ge=1, le=365)
+    redis_timeout_seconds: float = Field(default=0.2, gt=0, le=2, allow_inf_nan=False)
+
+    model_config = SettingsConfigDict(
+        env_prefix="METRICS_",
         env_file=BACKEND_ROOT / ".env.backend",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -108,3 +121,4 @@ class Settings(BaseSettings):
 setting = Settings()
 image_settings = ImageSettings()
 ocr_settings = OcrSettings()
+metrics_settings = MetricsSettings()
