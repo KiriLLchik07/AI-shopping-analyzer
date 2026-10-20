@@ -484,3 +484,76 @@ def test_worker_persists_normalized_units_and_api_preserves_values(
     assert item["unit"] == unit
     assert Decimal(item["quantity"]) == 2
     assert Decimal(item["unit_price"]) == Decimal("100.00")
+
+
+@pytest.mark.parametrize(
+    ("raw_name", "normalized_name"),
+    [
+        ("МОЛОКО 3,2% 900мл", "молоко 3,2% 900мл"),
+        ("RITTER\tSPORT  ШОКОЛАД", "ritter sport шоколад"),
+        ("ЧАИ\u0306 ЗЕЛЕ\u0308НЫИ\u0306", "чай зелёный"),
+        ("4514 ЛУЗИНСКАЯ КРЫНОЧКА 2.5% 900М", "4514 лузинская крыночка 2.5% 900м"),
+        ("SNICKERS орех 81г:32/160", "snickers орех 81г:32/160"),
+    ],
+)
+def test_worker_saves_raw_and_normalized_names_and_api_returns_both(
+    receipt_owner, client, monkeypatch, raw_name, normalized_name
+):
+    receipt_id, user = receipt_owner
+    raw = f"{raw_name} 100.00*1шт=100.00\nИТОГ 100.00"
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=raw))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.raw_ocr_text == raw
+        assert len(receipt.items) == 1
+        assert receipt.items[0].raw_name == raw_name
+        assert receipt.items[0].normalized_name == normalized_name
+        assert receipt.items[0].unit_price == Decimal("100.00")
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["raw_name"] == raw_name
+    assert item["normalized_name"] == normalized_name
+
+
+def test_manual_normalized_name_survives_duplicate_job_and_requires_replacement_consent(
+    receipt_owner, client, monkeypatch
+):
+    from backend.app.api import receipts as receipts_api
+
+    receipt_id, user = receipt_owner
+    monkeypatch.setattr(
+        jobs,
+        "get_receipt_pipeline",
+        lambda: pipeline(text="МОЛОКО 100.00*1шт=100.00\nИТОГ 100.00"),
+    )
+    jobs.process_receipt(str(receipt_id))
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    body = client.get(f"/api/receipts/{receipt_id}").json()
+    item_id = body["items"][0]["receipt_item_id"]
+    response = client.patch(
+        f"/api/receipts/{receipt_id}/items/{item_id}",
+        json={"normalized_name": "Молоко фермерское"},
+    )
+    assert response.status_code == 200
+    assert response.json()["raw_name"] == "МОЛОКО"
+    jobs.process_receipt(str(receipt_id))
+    monkeypatch.setattr(
+        receipts_api, "enqueue_receipt", lambda *args, **kwargs: "names-test-job"
+    )
+    assert client.post(f"/api/receipts/{receipt_id}/reprocess").status_code == 409
+    item = client.get(f"/api/receipts/{receipt_id}").json()["items"][0]
+    assert item["normalized_name"] == "Молоко фермерское"
+    assert item["raw_name"] == "МОЛОКО"
+    response = client.post(
+        f"/api/receipts/{receipt_id}/reprocess", json={"replace_items": True}
+    )
+    assert response.status_code == 202
+    jobs.process_receipt(str(receipt_id), response.json()["processing_version"])
+    items = client.get(f"/api/receipts/{receipt_id}").json()["items"]
+    assert len(items) == 1
+    assert items[0]["raw_name"] == "МОЛОКО"
+    assert items[0]["normalized_name"] == "молоко"

@@ -8,6 +8,7 @@ from backend.app.parsing.formats import (
     decimal_number,
     money_value,
 )
+from backend.app.parsing.names import normalize_item_name
 from backend.app.parsing.units import UNIT_PATTERN, normalize_unit
 from backend.app.schemas.parsing import ParsedReceiptItem
 
@@ -15,17 +16,17 @@ NUMBER = r"-?[0-9]+(?:[.,][0-9]+)?"
 UNIT = rf"(?:{UNIT_PATTERN})"
 MULTIPLY = r"[*×xх]"
 CALCULATION = re.compile(
-    rf"(?<![\w.,+-])(?P<price>{PRICE})\s*{MULTIPLY}\s*"
+    rf"(?<![\w.,+\-/])(?P<price>{PRICE})\s*{MULTIPLY}\s*"
     rf"(?P<quantity>{NUMBER})\s*(?P<unit>{UNIT})?\s*=\s*(?P<total>{PRICE})\s*$",
     re.IGNORECASE,
 )
 QUANTITY_FIRST = re.compile(
-    rf"(?<![\w.,])(?P<quantity>{NUMBER})\s*(?P<unit>{UNIT})\s*{MULTIPLY}\s*"
+    rf"(?<![\w.,/])(?P<quantity>{NUMBER})\s*(?P<unit>{UNIT})\s*{MULTIPLY}\s*"
     rf"(?P<price>{PRICE})\s*=\s*(?P<total>{PRICE})\s*$",
     re.IGNORECASE,
 )
 CALCULATION_START = re.compile(
-    rf"(?<![\w.,+-]){PRICE}\s*{MULTIPLY}\s*{NUMBER}\s*(?:{UNIT})?\s*$", re.IGNORECASE
+    rf"(?<![\w.,+\-/]){PRICE}\s*{MULTIPLY}\s*{NUMBER}\s*(?:{UNIT})?\s*$", re.IGNORECASE
 )
 TABLE_ROW = re.compile(
     rf"(?P<prices>(?:{PRICE}\s+){{0,3}})(?P<quantity>{NUMBER})\s*"
@@ -253,8 +254,15 @@ class ReceiptItemParser:
                 f"Строка {line_number}: единица измерения «{raw_unit}» не распознана; "
                 "проверьте её вручную."
             )
+        normalized_name = normalize_item_name(name)
+        if normalized_name is None:
+            warnings.append(
+                f"Строка {line_number}: нормализованное название не удалось сохранить; "
+                "проверьте название вручную."
+            )
         return ParsedReceiptItem(
             raw_name=name,
+            normalized_name=normalized_name,
             quantity=quantity,
             unit=unit,
             unit_price=price,

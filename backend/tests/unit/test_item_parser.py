@@ -29,7 +29,8 @@ def test_explicit_item_calculation(row, quantity, price, total, unit):
     assert item.unit_price == Decimal(price)
     assert item.total_price == Decimal(total)
     assert item.unit == unit
-    assert item.confidence is item.normalized_name is None
+    assert item.confidence is None
+    assert item.normalized_name == item.raw_name.lower()
 
 
 @pytest.mark.parametrize(
