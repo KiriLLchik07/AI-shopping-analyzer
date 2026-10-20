@@ -1,12 +1,13 @@
 from decimal import Decimal
 
 import pytest
-from backend.app.models.enums import ReceiptStatus
-from backend.app.models.receipt import Category, Receipt, ReceiptItem
-from backend.app.models.user import User
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from backend.app.models.enums import ReceiptStatus
+from backend.app.models.receipt import Category, Receipt, ReceiptItem
+from backend.app.models.user import User
 
 pytestmark = pytest.mark.integration
 
@@ -26,6 +27,19 @@ def make_receipt(user: User, **values: object) -> Receipt:
         image_object_key="receipts/test-receipt.webp",
         **values,
     )
+
+
+def test_database_rejects_negative_item_discount(db_session: Session) -> None:
+    item = ReceiptItem(
+        receipt=make_receipt(make_user()),
+        raw_name="Товар",
+        quantity=1,
+        discount_amount=Decimal("-0.01"),
+    )
+    db_session.add(item)
+    with pytest.raises(IntegrityError, match="discount_amount_check"):
+        db_session.flush()
+    db_session.rollback()
 
 
 def test_minimal_receipt_has_expected_defaults(

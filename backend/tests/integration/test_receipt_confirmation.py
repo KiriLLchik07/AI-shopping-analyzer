@@ -137,12 +137,32 @@ def test_manual_edit_requires_confirmation_again(review_receipt, client, mutatio
         )
     elif mutation == "add_item":
         response = client.post(
-            f"{url}/items", json={"raw_name": "Новый", "quantity": 1}
+            f"{url}/items",
+            json={
+                "raw_name": "Новый",
+                "quantity": 1,
+                "unit_price": "0",
+                "total_price": "0",
+            },
         )
     else:
         response = client.delete(f"{url}/items/{item_id}")
     assert response.status_code in {200, 201, 204}
     assert client.get(url).json()["status"] == "need_review"
+    if mutation == "delete_item":
+        assert client.post(f"{url}/confirm").status_code == 400
+        assert (
+            client.post(
+                f"{url}/items",
+                json={
+                    "raw_name": "Замена",
+                    "quantity": 1,
+                    "unit_price": "100",
+                    "total_price": "100",
+                },
+            ).status_code
+            == 201
+        )
     assert client.post(f"{url}/confirm").json()["status"] == "completed"
 
 
@@ -182,3 +202,114 @@ def test_concurrent_confirmation_is_idempotent(review_receipt):
         results = [future.result(timeout=10) for future in futures]
     assert results[0] == results[1]
     assert results[0][0] == ReceiptStatus.COMPLETED
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("quantity", "2"),
+        ("unit_price", "90"),
+        ("total_price", "99.94"),
+        ("unit_price", None),
+        ("total_price", None),
+    ],
+)
+def test_inconsistent_or_partial_item_cannot_be_confirmed(
+    review_receipt, client, field, value
+):
+    receipt_id, item_id, _ = review_receipt
+    url = f"/api/receipts/{receipt_id}"
+    assert (
+        client.patch(f"{url}/items/{item_id}", json={field: value}).status_code == 200
+    )
+    before = client.get(url).json()
+    response = client.post(f"{url}/confirm")
+    assert response.status_code == 400
+    assert "Позиция" in response.json()["detail"]
+    assert client.get(url).json() == before
+
+
+def test_receipt_total_must_match_current_items_and_can_be_fixed(
+    review_receipt, client
+):
+    receipt_id, _, _ = review_receipt
+    url = f"/api/receipts/{receipt_id}"
+    assert client.patch(url, json={"total_amount": "101"}).status_code == 200
+    response = client.post(f"{url}/confirm")
+    assert response.status_code == 400
+    assert "Сумма позиций" in response.json()["detail"]
+    assert client.get(url).json()["status"] == "need_review"
+    assert client.patch(url, json={"total_amount": "100"}).status_code == 200
+    assert client.post(f"{url}/confirm").json()["status"] == "completed"
+
+
+def test_missing_receipt_total_cannot_be_confirmed(review_receipt, client):
+    receipt_id, _, _ = review_receipt
+    url = f"/api/receipts/{receipt_id}"
+    assert client.patch(url, json={"total_amount": None}).status_code == 200
+    assert client.post(f"{url}/confirm").status_code == 400
+    assert client.get(url).json()["status"] == "need_review"
+
+
+def test_missing_ocr_quantity_cannot_be_confirmed(review_receipt, client):
+    receipt_id, item_id, _ = review_receipt
+    with SessionLocal.begin() as session:
+        session.get(ReceiptItem, item_id).quantity = None
+    assert client.post(f"/api/receipts/{receipt_id}/confirm").status_code == 400
+
+
+def test_confirmation_uses_live_values_and_ignores_stale_parsing_report(
+    review_receipt, client
+):
+    receipt_id, item_id, _ = review_receipt
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).parsing_report = {
+            "total_amount": "1000.00",
+            "warnings": ["Старое расхождение"],
+        }
+    url = f"/api/receipts/{receipt_id}"
+    assert (
+        client.patch(
+            f"{url}/items/{item_id}", json={"discount_amount": "20"}
+        ).status_code
+        == 200
+    )
+    assert client.post(f"{url}/confirm").status_code == 200
+    assert client.get(url).json()["parsing_report"]["total_amount"] == "1000.00"
+
+
+@pytest.mark.parametrize("total", ["99.95", "100.05"])
+def test_confirmation_allows_configured_tolerance_at_boundary(
+    review_receipt, client, total
+):
+    receipt_id, _, _ = review_receipt
+    url = f"/api/receipts/{receipt_id}"
+    assert client.patch(url, json={"total_amount": total}).status_code == 200
+    assert client.post(f"{url}/confirm").status_code == 200
+
+
+@pytest.mark.parametrize("field", ["unit_price", "total_price", "discount_amount"])
+@pytest.mark.parametrize("method", ["post", "patch"])
+def test_negative_item_amounts_are_rejected_without_changes(
+    review_receipt, client, field, method
+):
+    receipt_id, item_id, _ = review_receipt
+    url = f"/api/receipts/{receipt_id}"
+    before = client.get(url).json()
+    payload = {field: "-0.01"}
+    if method == "post":
+        payload |= {"raw_name": "Нельзя сохранить", "quantity": 1}
+        response = client.post(f"{url}/items", json=payload)
+    else:
+        response = client.patch(f"{url}/items/{item_id}", json=payload)
+    assert response.status_code == 422
+    assert client.get(url).json() == before
+
+
+@pytest.mark.parametrize("value", ["1.234", "10000000000", "NaN", "Infinity"])
+def test_invalid_discount_update_is_rejected(review_receipt, client, value):
+    receipt_id, item_id, _ = review_receipt
+    response = client.patch(
+        f"/api/receipts/{receipt_id}/items/{item_id}", json={"discount_amount": value}
+    )
+    assert response.status_code == 422

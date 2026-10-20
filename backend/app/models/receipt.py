@@ -163,6 +163,7 @@ class ReceiptItem(Base):
         CheckConstraint("weight > 0", "weight_check"),
         CheckConstraint("unit_price >= 0", "unit_price_check"),
         CheckConstraint("total_price >= 0", "total_price_check"),
+        CheckConstraint("discount_amount >= 0", "discount_amount_check"),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"
         ),

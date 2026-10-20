@@ -104,6 +104,15 @@ class ReceiptRepository:
         receipt.status = ReceiptStatus.COMPLETED
         self.db_session.flush()
 
+    def get_receipt_items(self, receipt_id: UUID) -> list[ReceiptItem]:
+        query = (
+            select(ReceiptItem)
+            .where(ReceiptItem.receipt_id == receipt_id)
+            .order_by(ReceiptItem.created_at, ReceiptItem.receipt_item_id)
+            .execution_options(populate_existing=True)
+        )
+        return list(self.db_session.scalars(query))
+
     def delete_receipt(self, receipt: Receipt) -> None:
         self.db_session.delete(receipt)
         self.db_session.flush()

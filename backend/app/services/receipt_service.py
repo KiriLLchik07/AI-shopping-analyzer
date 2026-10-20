@@ -2,10 +2,13 @@ import logging
 from datetime import datetime, time, timedelta, timezone
 from uuid import UUID
 
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.core.config import parsing_settings
 from backend.app.core.exceptions import (
+    BusinessRuleError,
     CategoryNotFoundError,
     ConflictError,
     ReceiptDeletionUnavailableError,
@@ -18,6 +21,7 @@ from backend.app.models.object_cleanup_task import ObjectCleanupTask
 from backend.app.models.receipt import Receipt, ReceiptItem
 from backend.app.repositories.category_repository import CategoryRepository
 from backend.app.repositories.receipt_repository import ReceiptRepository
+from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.request import (
     ReceiptItemCreateRequest,
     ReceiptItemUpdateRequest,
@@ -25,6 +29,7 @@ from backend.app.schemas.request import (
     ReceiptUpdateRequest,
 )
 from backend.app.services.object_cleanup_service import cleanup_one
+from backend.app.services.receipt_arithmetic import validate_receipt_arithmetic
 from backend.app.storage.exception import ObjectStorageError
 from backend.app.storage.interface import ObjectStorage
 
@@ -105,6 +110,19 @@ class ReceiptService:
         if receipt.status not in {ReceiptStatus.NEED_REVIEW, ReceiptStatus.COMPLETED}:
             raise ConflictError("Only a receipt awaiting review can be confirmed")
         if receipt.status == ReceiptStatus.NEED_REVIEW:
+            try:
+                items = [
+                    ReceiptItemData.model_validate(item)
+                    for item in self.repository.get_receipt_items(receipt_id)
+                ]
+            except ValidationError as error:
+                raise BusinessRuleError(
+                    "Проверьте значения товарных позиций: числа должны быть "
+                    "конечными и неотрицательными, количество — положительным."
+                ) from error
+            validate_receipt_arithmetic(
+                items, receipt.total_amount, tolerance=parsing_settings.total_tolerance
+            )
             self.repository.confirm_receipt(receipt)
 
         self.db_session.commit()

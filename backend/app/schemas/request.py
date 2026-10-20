@@ -98,8 +98,12 @@ class ReceiptItemCreateRequest(BaseModel):
     weight: Decimal | None = Field(
         default=None, gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
     )
-    unit_price: ItemAmount | None = None
-    total_price: ItemAmount | None = None
+    unit_price: ItemAmount | None = Field(
+        default=None, description="Конечная цена за единицу после скидок."
+    )
+    total_price: ItemAmount | None = Field(
+        default=None, description="Конечная сумма позиции после скидок."
+    )
     discount_amount: ItemAmount = Decimal("0.00")
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool = False
@@ -118,10 +122,16 @@ class ReceiptItemUpdateRequest(BaseModel):
     category_id: UUID | None = None
     quantity: ItemQuantity | None = None
     unit: str | None = Field(default=None, max_length=100)
-    weight: Decimal | None = Field(default=None, gt=0)
-    unit_price: ItemAmount | None = None
-    total_price: ItemAmount | None = None
-    discount_amount: Decimal | None = Field(default=None, ge=0)
+    weight: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
+    )
+    unit_price: ItemAmount | None = Field(
+        default=None, description="Конечная цена за единицу после скидок."
+    )
+    total_price: ItemAmount | None = Field(
+        default=None, description="Конечная сумма позиции после скидок."
+    )
+    discount_amount: ItemAmount | None = None
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool | None = None
 
