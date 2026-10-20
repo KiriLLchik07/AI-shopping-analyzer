@@ -78,6 +78,7 @@ class Receipt(Base):
     processing_result_saved_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     processing_error_code: Mapped[str | None] = mapped_column(String(64))
     processing_error_message: Mapped[str | None] = mapped_column(String(512))

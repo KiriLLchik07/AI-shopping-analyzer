@@ -109,7 +109,7 @@ class ReceiptService:
         receipt = self.get_receipt_by_id(receipt_id, user_id, for_update=True)
         if receipt.status not in {ReceiptStatus.NEED_REVIEW, ReceiptStatus.COMPLETED}:
             raise ConflictError("Only a receipt awaiting review can be confirmed")
-        if receipt.status == ReceiptStatus.NEED_REVIEW:
+        if receipt.status == ReceiptStatus.NEED_REVIEW or receipt.confirmed_at is None:
             try:
                 items = [
                     ReceiptItemData.model_validate(item)
@@ -123,7 +123,9 @@ class ReceiptService:
             validate_receipt_arithmetic(
                 items, receipt.total_amount, tolerance=parsing_settings.total_tolerance
             )
-            self.repository.confirm_receipt(receipt)
+            self.repository.confirm_receipt(
+                receipt, confirmed_at=datetime.now(timezone.utc)
+            )
 
         self.db_session.commit()
         self.db_session.refresh(receipt)

@@ -87,6 +87,7 @@ class ReceiptProcessingRepository:
         receipt.processing_replace_items = replace_items
 
         receipt.processing_result_saved_at = None
+        receipt.confirmed_at = None
         receipt.raw_ocr_text = None
         receipt.ocr_confidence = None
         receipt.orientation_report = None
@@ -144,6 +145,7 @@ class ReceiptProcessingRepository:
             ):
                 receipt.purchase_datetime = purchased_at
         receipt.processing_result_saved_at = saved_at
+        receipt.confirmed_at = None
         receipt.status = status
 
         receipt.processing_error_code = None

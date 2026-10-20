@@ -97,11 +97,13 @@ class ReceiptRepository:
         )
         if receipt.status == ReceiptStatus.COMPLETED:
             receipt.status = ReceiptStatus.NEED_REVIEW
+        receipt.confirmed_at = None
         self.db_session.flush()
         return receipt
 
-    def confirm_receipt(self, receipt: Receipt) -> None:
+    def confirm_receipt(self, receipt: Receipt, confirmed_at: datetime) -> None:
         receipt.status = ReceiptStatus.COMPLETED
+        receipt.confirmed_at = confirmed_at
         self.db_session.flush()
 
     def get_receipt_items(self, receipt_id: UUID) -> list[ReceiptItem]:
@@ -182,6 +184,7 @@ class ReceiptRepository:
             .where(Receipt.receipt_id == receipt_id)
             .values(
                 items_revision=Receipt.items_revision + 1,
+                confirmed_at=None,
                 status=case(
                     (
                         Receipt.status == ReceiptStatus.COMPLETED,
