@@ -1,14 +1,20 @@
 import re
 from decimal import Decimal
 
+from backend.app.parsing.formats import (
+    CURRENCY,
+    DATE,
+    PRICE,
+    decimal_number,
+    money_value,
+)
 from backend.app.schemas.parsing import ParsedReceiptItem
 
 NUMBER = r"-?[0-9]+(?:[.,][0-9]+)?"
-PRICE = r"(?:[0-9]{1,3}(?:[ \u00a0\u202f][0-9]{3})+|[0-9]+)[.,][0-9]{2}"
 UNIT = r"(?:шт\.?|кг\.?|гр\.?|г|мл|л|уп(?:ак)?\.?|WT\.?|Kr)"
 MULTIPLY = r"[*×xх]"
 CALCULATION = re.compile(
-    rf"(?<![\w.,])(?P<price>{PRICE})\s*{MULTIPLY}\s*"
+    rf"(?<![\w.,+-])(?P<price>{PRICE})\s*{MULTIPLY}\s*"
     rf"(?P<quantity>{NUMBER})\s*(?P<unit>{UNIT})?\s*=\s*(?P<total>{PRICE})\s*$",
     re.IGNORECASE,
 )
@@ -18,14 +24,14 @@ QUANTITY_FIRST = re.compile(
     re.IGNORECASE,
 )
 CALCULATION_START = re.compile(
-    rf"(?<![\w.,]){PRICE}\s*{MULTIPLY}\s*{NUMBER}\s*(?:{UNIT})?\s*$", re.IGNORECASE
+    rf"(?<![\w.,+-]){PRICE}\s*{MULTIPLY}\s*{NUMBER}\s*(?:{UNIT})?\s*$", re.IGNORECASE
 )
 TABLE_ROW = re.compile(
     rf"(?P<prices>(?:{PRICE}\s+){{0,3}})(?P<quantity>{NUMBER})\s*"
     rf"(?P<unit>{UNIT})?\s+(?P<total>{PRICE})\s*$",
     re.IGNORECASE,
 )
-TOTAL_ONLY = re.compile(rf"\s*=\s*(?P<total>{PRICE})\s*$")
+TOTAL_ONLY = re.compile(rf"\s*=\s*(?P<total>{PRICE})\s*$", re.IGNORECASE)
 TABLE_HEADER = re.compile(r"ЦЕНА.*КОЛ.?ВО", re.IGNORECASE)
 QUANTITY_HEADER = re.compile(r"КОЛ.?ВО", re.IGNORECASE)
 HEADER_TRANSLATION = str.maketrans("ABCEHKMOPTХ", "АВСЕНКМОРТХ")
@@ -44,12 +50,10 @@ PROMOTION = re.compile(
 )
 TAX_PREFIX = re.compile(r"^НДС\s+[0-9]+%\s*", re.IGNORECASE)
 NUMERIC_FRAGMENT = re.compile(
-    rf"(?:{NUMBER}\s*(?:{UNIT})?)(?:\s+{NUMBER}\s*(?:{UNIT})?)*|[*×xх=]", re.IGNORECASE
+    rf"(?:{PRICE}|{NUMBER}\s*(?:{UNIT})?)(?:\s+(?:{PRICE}|{NUMBER}\s*(?:{UNIT})?))*"
+    rf"|{MULTIPLY}\s*{NUMBER}\s*(?:{UNIT})?|[*×xх=]",
+    re.IGNORECASE,
 )
-
-
-def _decimal(value: str) -> Decimal:
-    return Decimal("".join(value.split()).replace(",", "."))
 
 
 class ReceiptItemParser:
@@ -67,6 +71,8 @@ class ReceiptItemParser:
         for number, original in enumerate(lines, start=1):
             line = original.strip()
             if not line:
+                continue
+            if CURRENCY.fullmatch(line):
                 continue
             structural = line.upper().translate(HEADER_TRANSLATION)
             if TABLE_HEADER.search(structural):
@@ -167,7 +173,7 @@ class ReceiptItemParser:
             if (
                 table
                 and names
-                and re.fullmatch(PRICE, numbers[-1])
+                and re.fullmatch(PRICE, numbers[-1], re.IGNORECASE)
                 and any(
                     re.search(rf"{NUMBER}\s*{UNIT}", value, re.IGNORECASE)
                     for value in numbers
@@ -190,7 +196,7 @@ class ReceiptItemParser:
             SERVICE.match(line) is not None
             or PROMOTION.search(line) is not None
             or not re.search(r"[\w]", line)
-            or bool(re.search(r"[0-9]{2}[./-][0-9]{2}[./-][0-9]{2}", line))
+            or DATE.search(line) is not None
         )
 
     @staticmethod
@@ -219,16 +225,18 @@ class ReceiptItemParser:
         if len(name) > 256:
             return None, [f"Строка {line_number}: название товара слишком длинное."]
         groups = match.groupdict()
-        quantity = _decimal(groups["quantity"]) if groups.get("quantity") else None
+        quantity = (
+            decimal_number(groups["quantity"]) if groups.get("quantity") else None
+        )
         if quantity is not None and (
             not 0 < quantity <= Decimal("999999999999.999")
             or quantity != quantity.quantize(Decimal("0.001"))
         ):
             quantity = None
-        price = _decimal(groups["price"]) if groups.get("price") else None
+        price = money_value(groups["price"]) if groups.get("price") else None
         if groups.get("prices"):
-            price = _decimal(re.findall(PRICE, groups["prices"])[-1])
-        total = _decimal(groups["total"])
+            price = money_value(re.findall(PRICE, groups["prices"], re.IGNORECASE)[-1])
+        total = money_value(groups["total"])
         if price is not None and price > Decimal("9999999999.99"):
             price = None
         if total > Decimal("9999999999.99"):

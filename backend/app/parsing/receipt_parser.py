@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from backend.app.parsing.formats import DATE, MONEY, decimal_number
 from backend.app.parsing.item_parser import ReceiptItemParser
 from backend.app.schemas.parsing import ReceiptParsingResult
 
@@ -10,19 +11,9 @@ TOTAL_LABEL = re.compile(
     r"^(?:ИТОГ(?:О)?(?:\s+К\s+ОПЛАТЕ)?|(?:СУММА\s+)?К\s+ОПЛАТЕ)\b",
     re.IGNORECASE,
 )
-MONEY = re.compile(
-    r"[:=\s]*(?P<amount>(?:[0-9]{1,3}(?: [0-9]{3})+|[0-9]+)"
-    r"(?:[.,][0-9]{2})?)\s*(?:₽|руб(?:\.|лей|ля)?|р\.)?",
-    re.IGNORECASE,
-)
-DATE = re.compile(
-    r"(?<![\d./-])(?P<date>[0-9]{4}-[0-9]{2}-[0-9]{2}"
-    r"|[0-9]{2}(?P<separator>[./-])[0-9]{2}(?P=separator)(?:[0-9]{4}|[0-9]{2}))"
-    r"(?![\d./-])"
-)
 TIME = re.compile(
     r"(?<![\d:])(?P<time>[0-9]{2}:[0-9]{2}(?::[0-9]{2})?)"
-    r"(?P<offset>Z|[+-][0-9]{2}:[0-9]{2})?(?![\d:])"
+    r"(?:\s*(?P<offset>Z|[+-][0-9]{2}:[0-9]{2}))?(?![\d:])"
 )
 PROMOTION = re.compile(
     r"АКЦИ|КУПОН|СКИДК|ДЕЙСТВУЕТ|СЛЕДУЮЩ|ГОДЕН|СРОК|ИЗГОТОВ|ПО\s+\d|ДО\s+\d",
@@ -90,7 +81,7 @@ class ReceiptParser:
             match = MONEY.fullmatch(tail)
             if match is None:
                 continue
-            value = Decimal(match["amount"].replace(" ", "").replace(",", "."))
+            value = decimal_number(match["amount"])
             amounts.append(value)
         candidates = _unique(amounts)
         if len(candidates) != 1:
@@ -144,11 +135,12 @@ class ReceiptParser:
 
     @staticmethod
     def _parse_datetime(date_text: str, time_match: re.Match) -> datetime | None:
-        if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", date_text):
-            year, month, day = (int(part) for part in date_text.split("-"))
+        parts = re.split(r"[./-]", date_text)
+        if len(parts[0]) == 4:
+            year, month, day = (int(part) for part in parts)
         else:
-            day, month, year = (int(part) for part in re.split(r"[./-]", date_text))
-            if year < 100:
+            day, month, year = (int(part) for part in parts)
+            if len(parts[2]) == 2:
                 year += 2000
         try:
             date_value = f"{year:04}-{month:02}-{day:02}"

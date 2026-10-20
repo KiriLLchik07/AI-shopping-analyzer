@@ -5,6 +5,8 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
+
 from backend.app.api.dependencies.auth import get_current_user
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
@@ -20,7 +22,6 @@ from backend.app.services.receipt_processing_service import (
     SaveProcessingOutcome,
 )
 from backend.app.workers import jobs
-from sqlalchemy.exc import IntegrityError
 
 pytestmark = pytest.mark.integration
 TEXT = 'ООО "Тестовый магазин"\n20.10.2026 17:46\nИТОГ 3 240,00 ₽'
@@ -337,3 +338,39 @@ def test_actual_ocr_fragments_can_be_processed_and_saved(
         assert receipt.raw_ocr_text == text
         if count == 0:
             assert "Товарные строки не найдены." in receipt.parsing_report["warnings"]
+
+
+@pytest.mark.parametrize(
+    ("date_text", "price", "total"),
+    [
+        ("1.2.2026 09:05", "100,5 ₽", "201,00 руб."),
+        ("2026/02/01 09:05:00", "100.50 р.", "201 RUB"),
+        ("01/02/26 09:05 +03:00", "100,50 рублей", "201,00 ₽"),
+    ],
+)
+def test_currency_and_date_formats_are_saved_and_exposed_in_api(
+    receipt_owner, client, monkeypatch, date_text, price, total
+):
+    receipt_id, user = receipt_owner
+    raw = f"МАГНИТ\nДата: {date_text}\nТовар {price}*2шт={total}\nИТОГ {total}"
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=raw))
+    jobs.process_receipt(str(receipt_id))
+    expected_hour = 6 if "+03:00" in date_text else 3
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.purchase_datetime == datetime(
+            2026, 2, 1, expected_hour, 5, tzinfo=UTC
+        )
+        assert receipt.total_amount == Decimal("201.00")
+        assert receipt.raw_ocr_text == raw
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.items[0].raw_name == "Товар"
+        assert receipt.items[0].quantity == 2
+        assert receipt.items[0].unit_price == Decimal("100.50")
+        assert receipt.items[0].total_price == Decimal("201.00")
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    body = response.json()
+    assert Decimal(body["items"][0]["unit_price"]) == Decimal("100.50")
+    assert Decimal(body["total_amount"]) == Decimal("201.00")
