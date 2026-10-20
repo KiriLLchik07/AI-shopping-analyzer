@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.models.enums import ReceiptStatus
@@ -95,8 +95,14 @@ class ReceiptRepository:
         receipt.manually_updated_fields = sorted(
             set(receipt.manually_updated_fields or ()) | update_data.keys()
         )
+        if receipt.status == ReceiptStatus.COMPLETED:
+            receipt.status = ReceiptStatus.NEED_REVIEW
         self.db_session.flush()
         return receipt
+
+    def confirm_receipt(self, receipt: Receipt) -> None:
+        receipt.status = ReceiptStatus.COMPLETED
+        self.db_session.flush()
 
     def delete_receipt(self, receipt: Receipt) -> None:
         self.db_session.delete(receipt)
@@ -165,6 +171,15 @@ class ReceiptRepository:
         self.db_session.execute(
             update(Receipt)
             .where(Receipt.receipt_id == receipt_id)
-            .values(items_revision=Receipt.items_revision + 1)
+            .values(
+                items_revision=Receipt.items_revision + 1,
+                status=case(
+                    (
+                        Receipt.status == ReceiptStatus.COMPLETED,
+                        ReceiptStatus.NEED_REVIEW,
+                    ),
+                    else_=Receipt.status,
+                ),
+            )
         )
         self.db_session.flush()

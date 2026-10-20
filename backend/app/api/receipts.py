@@ -93,6 +93,16 @@ def update_receipt(
     return ReceiptResponse.model_validate(receipt)
 
 
+@router.post("/api/receipts/{receipt_id}/confirm", response_model=ReceiptResponse)
+def confirm_receipt(
+    receipt_id: Annotated[UUID, Path()],
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ReceiptResponse:
+    receipt = ReceiptService(db_session).confirm_receipt(receipt_id, user.user_id)
+    return ReceiptResponse.model_validate(receipt)
+
+
 @router.delete("/api/receipts/{receipt_id}", status_code=204)
 def delete_receipt(
     receipt_id: Annotated[UUID, Path()],

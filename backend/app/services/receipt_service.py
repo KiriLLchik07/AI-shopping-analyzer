@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.core.exceptions import (
     CategoryNotFoundError,
+    ConflictError,
     ReceiptDeletionUnavailableError,
     ReceiptImageUnavailableError,
     ReceiptItemNotFoundError,
     ReceiptNotFoundError,
 )
+from backend.app.models.enums import ReceiptStatus
 from backend.app.models.object_cleanup_task import ObjectCleanupTask
 from backend.app.models.receipt import Receipt, ReceiptItem
 from backend.app.repositories.category_repository import CategoryRepository
@@ -96,6 +98,17 @@ class ReceiptService:
         self.db_session.commit()
         self.db_session.refresh(receipt)
 
+        return receipt
+
+    def confirm_receipt(self, receipt_id: UUID, user_id: UUID) -> Receipt:
+        receipt = self.get_receipt_by_id(receipt_id, user_id, for_update=True)
+        if receipt.status not in {ReceiptStatus.NEED_REVIEW, ReceiptStatus.COMPLETED}:
+            raise ConflictError("Only a receipt awaiting review can be confirmed")
+        if receipt.status == ReceiptStatus.NEED_REVIEW:
+            self.repository.confirm_receipt(receipt)
+
+        self.db_session.commit()
+        self.db_session.refresh(receipt)
         return receipt
 
     def delete_receipt(
