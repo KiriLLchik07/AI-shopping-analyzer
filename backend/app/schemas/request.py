@@ -91,16 +91,23 @@ class ReceiptItemCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     raw_name: str = Field(min_length=1, max_length=256)
-    normalized_name: str | None = Field(default=None, max_length=256)
+    normalized_name: str | None = Field(default=None, min_length=1, max_length=256)
     category_id: UUID | None = None
     quantity: ItemQuantity
     unit: str | None = Field(default=None, max_length=100)
-    weight: Decimal | None = Field(default=None, gt=0)
+    weight: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2, allow_inf_nan=False
+    )
     unit_price: ItemAmount | None = None
     total_price: ItemAmount | None = None
-    discount_amount: Decimal = Field(default=Decimal("0.00"), ge=0)
+    discount_amount: ItemAmount = Decimal("0.00")
     confidence: float | None = Field(default=None, ge=0, le=1)
     is_impulse_candidate: bool = False
+
+    @field_validator("raw_name", "normalized_name", mode="before")
+    @classmethod
+    def strip_item_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
 
 class ReceiptItemUpdateRequest(BaseModel):
