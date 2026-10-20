@@ -245,7 +245,19 @@ def test_edit_item_preserves_omitted_fields(review_item, client, field, value):
         assert Decimal(after[field]) == Decimal(value)
     else:
         assert after[field] == value
-    for omitted in before.keys() - {field, "updated_at"}:
+    changed = {field, "updated_at"}
+    if field in {"raw_name", "normalized_name"}:
+        changed.add("category_source")
+        changed |= {
+            "suggested_category_id",
+            "category_rule_version",
+            "category_match",
+            "category_input",
+        }
+    if field == "category_id":
+        changed.add("category_confirmed_at")
+        changed.add("category_source")
+    for omitted in before.keys() - changed:
         assert after[omitted] == before[omitted]
     with SessionLocal() as session:
         assert session.get(Receipt, receipt_id).items_revision == 1

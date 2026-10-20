@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -21,3 +22,12 @@ class CategoryRepository:
 
         query = select(Category).order_by(Category.category_name)
         return list(self.db_session.scalars(query).all())
+
+    def get_existing_ids(self, category_ids: Sequence[UUID]) -> set[UUID]:
+        return set(
+            self.db_session.scalars(
+                select(Category.category_id).where(
+                    Category.category_id.in_(category_ids)
+                )
+            )
+        )

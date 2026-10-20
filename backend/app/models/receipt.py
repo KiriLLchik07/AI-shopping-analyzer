@@ -131,6 +131,20 @@ class ReceiptItem(Base):
         ForeignKey("categories.category_id", ondelete="SET NULL"),
         index=True,
     )
+    suggested_category_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("categories.category_id", ondelete="SET NULL"),
+        index=True,
+    )
+    category_rule_version: Mapped[str | None] = mapped_column(String(64))
+    category_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="automatic", server_default="automatic"
+    )
+    category_match: Mapped[str | None] = mapped_column(String(256))
+    category_input: Mapped[str | None] = mapped_column(Text)
+    category_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     quantity: Mapped[Decimal | None] = mapped_column(Numeric(15, 3))
     unit: Mapped[str | None] = mapped_column(String(100))
     weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
@@ -155,6 +169,7 @@ class ReceiptItem(Base):
 
     category: Mapped["Category | None"] = relationship(
         back_populates="receipt_items",
+        foreign_keys=[category_id],
     )
 
     receipt: Mapped["Receipt"] = relationship(back_populates="items")
@@ -165,6 +180,10 @@ class ReceiptItem(Base):
         CheckConstraint("unit_price >= 0", "unit_price_check"),
         CheckConstraint("total_price >= 0", "total_price_check"),
         CheckConstraint("discount_amount >= 0", "discount_amount_check"),
+        CheckConstraint(
+            "category_source IN ('automatic', 'manual', 'legacy')",
+            "category_source_check",
+        ),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"
         ),
@@ -207,5 +226,7 @@ class Category(Base):
     )
 
     receipt_items: Mapped[list["ReceiptItem"]] = relationship(
-        back_populates="category", passive_deletes=True
+        back_populates="category",
+        passive_deletes=True,
+        foreign_keys="ReceiptItem.category_id",
     )

@@ -2,6 +2,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
+from sqlalchemy.orm import Session, sessionmaker
+
 from backend.app.core.exceptions import (
     ConflictError,
     ReceiptNotFoundError,
@@ -19,7 +21,9 @@ from backend.app.schemas.processing import (
     ReceiptProcessingResult,
     ReceiptProcessTicket,
 )
-from sqlalchemy.orm import Session, sessionmaker
+from backend.app.services.receipt_categorization_service import (
+    ReceiptCategorizationService,
+)
 
 
 class SaveProcessingOutcome(StrEnum):
@@ -259,7 +263,7 @@ class ReceiptProcessingService:
 
             repository.store_result(
                 receipt=receipt,
-                items=result.items,
+                items=ReceiptCategorizationService(session).suggest_items(result.items),
                 raw_ocr_text=result.raw_ocr_text,
                 parsed_receipt=result.parsed_receipt,
                 saved_at=datetime.now(UTC),

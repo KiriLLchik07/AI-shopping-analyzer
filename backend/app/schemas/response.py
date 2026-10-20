@@ -83,6 +83,12 @@ class ReceiptItemResponse(BaseModel):
     raw_name: str
     normalized_name: str | None
     category_id: UUID | None
+    suggested_category_id: UUID | None = None
+    category_rule_version: str | None = None
+    category_source: Literal["automatic", "manual", "legacy"] = "automatic"
+    category_match: str | None = None
+    category_input: str | None = None
+    category_confirmed_at: datetime | None = None
     quantity: Decimal | None
     unit: str | None
     weight: Decimal | None

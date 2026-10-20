@@ -3,13 +3,15 @@ from decimal import Decimal
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from backend.app.categorization.catalog import DEFAULT_CATEGORIES
 from backend.app.main import app
 from backend.app.models.enums import ReceiptStatus
 from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.models.user import User
-from fastapi.testclient import TestClient
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
 
@@ -567,10 +569,9 @@ def test_categories_are_authenticated_and_returned_in_name_order(
     response = client.get("/api/categories")
 
     assert response.status_code == 200
-    assert [category["category_name"] for category in response.json()] == [
-        "Alpha",
-        "Zeta",
-    ]
+    names = [category["category_name"] for category in response.json()]
+    assert set(names) == {*DEFAULT_CATEGORIES, "Alpha", "Zeta"}
+    assert names.index("Alpha") < names.index("Zeta")
     assert all(
         set(category) == {"category_id", "category_name", "parent_id"}
         for category in response.json()
