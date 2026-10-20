@@ -126,7 +126,7 @@ class ReceiptItem(Base):
         ForeignKey("categories.category_id", ondelete="SET NULL"),
         index=True,
     )
-    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity: Mapped[Decimal | None] = mapped_column(Numeric(15, 3))
     unit: Mapped[str | None] = mapped_column(String(100))
     weight: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
     unit_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2))
@@ -157,8 +157,8 @@ class ReceiptItem(Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", "quantity_check"),
         CheckConstraint("weight > 0", "weight_check"),
-        CheckConstraint("unit_price > 0", "unit_price_check"),
-        CheckConstraint("total_price > 0", "total_price_check"),
+        CheckConstraint("unit_price >= 0", "unit_price_check"),
+        CheckConstraint("total_price >= 0", "total_price_check"),
         CheckConstraint(
             "confidence >= 0 AND confidence <= 1", name="receipt_item_confidence_range"
         ),

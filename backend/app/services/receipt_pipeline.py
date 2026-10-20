@@ -7,6 +7,7 @@ from backend.app.ocr.exceptions import OcrConfigurationError
 from backend.app.ocr.factory import get_ocr_provider
 from backend.app.ocr.interface import OcrProvider
 from backend.app.parsing.receipt_parser import ReceiptParser
+from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.processing import (
     ReceiptPreprocessingResult,
@@ -75,10 +76,14 @@ class UnconfiguredReceiptPipeline(ReceiptPipeline):
         return self.ocr_provider.recognize(image)
 
     def parse(self, raw_text: str) -> ReceiptProcessingResult:
+        parsed = self.parser.parse(raw_text)
         return ReceiptProcessingResult(
             raw_ocr_text=raw_text,
-            items=(),
-            parsed_receipt=self.parser.parse(raw_text),
+            items=tuple(
+                ReceiptItemData.model_validate(item.model_dump(exclude_none=True))
+                for item in parsed.items
+            ),
+            parsed_receipt=parsed,
         )
 
 

@@ -1,13 +1,12 @@
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import delete, select
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
-
 from backend.app.models.enums import ReceiptStatus
 from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.models.user import User
+from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
 pytestmark = pytest.mark.integration
 
@@ -219,7 +218,7 @@ def test_deleting_categories_sets_foreign_keys_to_null(
         ("quantity", 0),
         ("weight", Decimal("0.00")),
         ("unit_price", Decimal("-0.01")),
-        ("total_price", Decimal("0.00")),
+        ("total_price", Decimal("-0.01")),
         ("confidence", -0.01),
         ("confidence", 1.01),
     ],

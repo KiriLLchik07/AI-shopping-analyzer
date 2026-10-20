@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
+from backend.app.parsing.item_parser import ReceiptItemParser
 from backend.app.schemas.parsing import ReceiptParsingResult
 
 TOTAL_LABEL = re.compile(
@@ -54,12 +55,14 @@ class ReceiptParser:
         store, store_warnings = self._store(lines)
         purchased_at, date_warnings = self._datetime(lines)
         total, total_warnings = self._total(lines)
+        items, item_warnings = ReceiptItemParser().parse(raw_text)
         return ReceiptParsingResult(
             raw_ocr_text=raw_text,
             store_name=store,
             purchase_datetime=purchased_at,
             total_amount=total,
-            warnings=(*store_warnings, *date_warnings, *total_warnings),
+            items=items,
+            warnings=(*store_warnings, *date_warnings, *total_warnings, *item_warnings),
         )
 
     def _store(self, lines: list[str]) -> tuple[str | None, tuple[str, ...]]:

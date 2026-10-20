@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import Mock
 from uuid import uuid4
 
@@ -67,7 +68,7 @@ def test_worker_parses_metadata_persists_report_and_exposes_api(
         assert receipt.ocr_confidence == 0.9
         assert receipt.status == ReceiptStatus.NEED_REVIEW
         assert receipt.items == []
-        assert receipt.parsing_report["warnings"] == []
+        assert receipt.parsing_report["warnings"] == ["Товарные строки не найдены."]
         assert "raw_ocr_text" not in receipt.parsing_report
         assert "items" not in receipt.parsing_report
     monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
@@ -119,7 +120,7 @@ def test_missing_metadata_goes_to_review_instead_of_failed(receipt_owner, monkey
             is receipt.total_amount
             is None
         )
-        assert len(receipt.parsing_report["warnings"]) == 3
+        assert len(receipt.parsing_report["warnings"]) == 4
         assert receipt.status == ReceiptStatus.NEED_REVIEW
         assert receipt.processing_error_code is None
 
@@ -205,3 +206,134 @@ def test_reprocess_clears_report_and_ignores_old_job(receipt_owner):
         )
         == SaveProcessingOutcome.SAVED
     )
+
+
+@pytest.mark.parametrize(
+    ("number", "count"), [(1, 8), (2, 6), (3, 1), (4, 1), (5, 3), (6, 1), (7, 3)]
+)
+def test_worker_saves_fixture_items_and_duplicate_job_is_idempotent(
+    receipt_owner, client, monkeypatch, number, count
+):
+    receipt_id, user = receipt_owner
+    root = Path(__file__).resolve().parents[1] / "fixtures/ocr/v1/texts"
+    raw = (root / f"receipt_{number:03}.txt").read_text(encoding="utf-8-sig")
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=raw))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert len(receipt.items) == count
+        original_ids = {item.receipt_item_id for item in receipt.items}
+        assert all(
+            item.raw_name and item.unit_price is not None for item in receipt.items
+        )
+        assert all(item.confidence is None for item in receipt.items)
+        if number == 7:
+            bananas = next(
+                item for item in receipt.items if item.raw_name == "Бананы 1КГ"
+            )
+            assert bananas.quantity == Decimal("0.432")
+            assert bananas.unit_price == Decimal("169.99")
+            assert bananas.total_price == Decimal("73.44")
+            assert bananas.unit == "КГ"
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        assert {
+            item.receipt_item_id for item in session.get(Receipt, receipt_id).items
+        } == original_ids
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    assert len(response.json()["items"]) == count
+    if number == 7:
+        bananas = next(
+            item
+            for item in response.json()["items"]
+            if item["raw_name"] == "Бананы 1КГ"
+        )
+        assert Decimal(bananas["quantity"]) == Decimal("0.432")
+
+
+def test_partial_item_is_persisted_without_fake_quantity(
+    receipt_owner, client, monkeypatch
+):
+    receipt_id, user = receipt_owner
+    raw = "Неясный товар =90.00\nИТОГ 90.00"
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=raw))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        item = receipt.items[0]
+        assert item.quantity is item.unit_price is None
+        assert item.total_price == Decimal("90.00")
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert any(
+            "количество" in warning for warning in receipt.parsing_report["warnings"]
+        )
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    body = client.get(f"/api/receipts/{receipt_id}").json()
+    assert body["items"][0]["quantity"] is None
+
+
+def test_free_item_prices_are_persisted_as_zero(receipt_owner, monkeypatch):
+    receipt_id, _ = receipt_owner
+    monkeypatch.setattr(
+        jobs,
+        "get_receipt_pipeline",
+        lambda: pipeline(text="Подарок 0.00*1шт =0.00\nИТОГ 100.00"),
+    )
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        item = session.get(Receipt, receipt_id).items[0]
+        assert item.quantity == 1
+        assert item.unit_price == item.total_price == 0
+
+
+def test_fractional_quantity_can_be_created_and_corrected_in_api(
+    receipt_owner, client, monkeypatch
+):
+    receipt_id, user = receipt_owner
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.post(
+        f"/api/receipts/{receipt_id}/items",
+        json={
+            "raw_name": "Бананы",
+            "quantity": "0.432",
+            "unit": "кг",
+            "unit_price": "169.99",
+            "total_price": "73.44",
+        },
+    )
+    assert response.status_code == 201
+    item_id = response.json()["receipt_item_id"]
+    assert Decimal(response.json()["quantity"]) == Decimal("0.432")
+    response = client.patch(
+        f"/api/receipts/{receipt_id}/items/{item_id}", json={"quantity": "0.501"}
+    )
+    assert response.status_code == 200
+    assert Decimal(response.json()["quantity"]) == Decimal("0.501")
+    response = client.patch(
+        f"/api/receipts/{receipt_id}/items/{item_id}", json={"quantity": "0.0001"}
+    )
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    ("number", "count"), [(1, 8), (2, 6), (3, 0), (4, 1), (5, 0), (6, 1), (7, 3)]
+)
+def test_actual_ocr_fragments_can_be_processed_and_saved(
+    receipt_owner, monkeypatch, number, count
+):
+    receipt_id, _ = receipt_owner
+    root = Path(__file__).resolve().parents[1] / "fixtures/parsing/v1/ocr"
+    text = (root / f"receipt_{number:03}.txt").read_text(encoding="utf-8")
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=text))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.processing_error_code is None
+        assert len(receipt.items) == count
+        assert receipt.raw_ocr_text == text
+        if count == 0:
+            assert "Товарные строки не найдены." in receipt.parsing_report["warnings"]

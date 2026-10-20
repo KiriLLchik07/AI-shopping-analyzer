@@ -81,7 +81,7 @@ class ReceiptItemResponse(BaseModel):
     raw_name: str
     normalized_name: str | None
     category_id: UUID | None
-    quantity: int
+    quantity: Decimal | None
     unit: str | None
     weight: Decimal | None
     unit_price: Decimal | None

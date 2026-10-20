@@ -1,8 +1,8 @@
 from uuid import UUID
 
+from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.parsing import ReceiptParsingResult
-from backend.app.schemas.request import ReceiptItemCreateRequest
 from pydantic import BaseModel, ConfigDict
 
 
@@ -15,7 +15,7 @@ class ReceiptPreprocessingResult(BaseModel):
 class ReceiptProcessingResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
     raw_ocr_text: str | None = None
-    items: tuple[ReceiptItemCreateRequest, ...]
+    items: tuple[ReceiptItemData, ...]
     parsed_receipt: ReceiptParsingResult | None = None
 
 

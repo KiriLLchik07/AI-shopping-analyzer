@@ -26,7 +26,7 @@ def test_extracts_metadata_with_configured_timezone(date_text, time_text):
     assert result.total_amount == Decimal("3240.00")
     assert result.raw_ocr_text == raw
     assert result.items == ()
-    assert result.warnings == ()
+    assert result.warnings == ("Товарные строки не найдены.",)
 
 
 @pytest.mark.parametrize(
@@ -188,7 +188,7 @@ def test_pipeline_runs_real_parser_and_does_not_fabricate_items():
 def test_empty_text_is_partial_result_not_technical_failure():
     result = ReceiptParser().parse("")
     assert result.store_name is result.purchase_datetime is result.total_amount is None
-    assert len(result.warnings) == 3
+    assert len(result.warnings) == 4
 
 
 def test_parsing_timezone_settings_are_optional_and_validated():

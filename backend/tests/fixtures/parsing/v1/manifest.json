@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "source": "tests/fixtures/ocr/v1 manually redacted images; EXIF/RGB PNG; original SDK text order",
+  "runtime": {
+    "device": "cpu",
+    "cpu_threads": 4,
+    "versions": {
+      "paddleocr": "3.3.2",
+      "paddlepaddle": "3.2.2",
+      "paddlex": "3.3.13"
+    },
+    "models": [
+      {
+        "name": "PP-OCRv5_mobile_det",
+        "url": "https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det/resolve/0d63e78e2b680928f6b1747d76a08db6e645efb7",
+        "revision": "0d63e78e2b680928f6b1747d76a08db6e645efb7",
+        "files_sha256": {
+          "inference.json": "05feef1acb00aa4cd7362b15f7f501fc4f99d7b1fa73c1c871e0c7b1504b0f5c",
+          "inference.pdiparams": "afa1820cb16c1fd0dad589d0f8b389139061c1ef6d68019685fd07be997dda5b",
+          "inference.yml": "98069072e1b6b37d727fd9d9f11725faa46d6ea0de012f2ed26caea011c37699"
+        }
+      },
+      {
+        "name": "cyrillic_PP-OCRv5_mobile_rec",
+        "url": "https://huggingface.co/PaddlePaddle/cyrillic_PP-OCRv5_mobile_rec/resolve/712d2d65556ccc1ea7b5d2bb232b018838b6a3ab",
+        "revision": "712d2d65556ccc1ea7b5d2bb232b018838b6a3ab",
+        "files_sha256": {
+          "inference.json": "5d90f1bfca52d80c01de176c5238fae2459995a99ff1dbfe5319ab4ed1735df2",
+          "inference.pdiparams": "434dc9fa2a99fa3653e08f8cf793ae56be7dd41c35c4980e6255147cc02bbc80",
+          "inference.yml": "5c76cc91fa98410178a09f498db10050d0ec1634a660053d3005ab7be581f501"
+        }
+      }
+    ]
+  },
+  "samples": [
+    {
+      "id": "receipt_001",
+      "sha256": "0815373a94d685a5d9eb11342a64f79e9477cfaf34096bf2f661ae62718794df",
+      "source_image_sha256": "f16cc5096497328b67313af2cb273e17819c91655374b2c1fb0fa2f0a2f26b47"
+    },
+    {
+      "id": "receipt_002",
+      "sha256": "4f3dfe5a5a52189f13416c5faf1b0f8b8dd67f69f0c2fef8e80221f0e11ba8ff",
+      "source_image_sha256": "b5dc38bc7ecdada7a397f186f641ec01a781ffdb8858235ddf6731384072d399"
+    },
+    {
+      "id": "receipt_003",
+      "sha256": "d2f91483ece2432a55fbea8d2ac96715dd27c35acd3260dd610f66d6d24d3b6a",
+      "source_image_sha256": "a2ff9bc3ebc1d2e023ae3ea45b2ceb02a2e10d75c65d7cf135de027082eb5173"
+    },
+    {
+      "id": "receipt_004",
+      "sha256": "754f5b39f64936bf53a7c72b6a1281baf981a1f313667ea88ceeb27f86057c84",
+      "source_image_sha256": "4d2732ceb72a106dd1dde600af866aa38ccdde21a280d64525d20e3908d13f25"
+    },
+    {
+      "id": "receipt_005",
+      "sha256": "edea7e4302f0775e868cb4825bd1b4cb742fcfa3102693ac16b575224b1a6945",
+      "source_image_sha256": "e64c2b84f69a260b4f706ee74e2359aefb6ac4b2f594947940e097e6fb726672"
+    },
+    {
+      "id": "receipt_006",
+      "sha256": "24e8b6281f0e22bc21343ebc95eb5c1407ecaf97d32f3c380f8dcd421845b390",
+      "source_image_sha256": "90f8b226cc282813ef540d956564b8ad5492a9bb00af518099f751ced4f47c0e"
+    },
+    {
+      "id": "receipt_007",
+      "sha256": "cf74b58c03ae7e01de297d9cc4f8ee382662bc708d0790178c68cf0caa975473",
+      "source_image_sha256": "c8b86d0c07779d3bd9bbdfcf8e93a650677039311f320e2f1ed0a5614974f904"
+    }
+  ]
+}

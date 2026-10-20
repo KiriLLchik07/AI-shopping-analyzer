@@ -4,10 +4,10 @@ from uuid import UUID
 
 from backend.app.models import Receipt, ReceiptItem
 from backend.app.models.enums import ReceiptStatus
+from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.parsing import ReceiptParsingResult
-from backend.app.schemas.request import ReceiptItemCreateRequest
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -105,7 +105,7 @@ class ReceiptProcessingRepository:
     def store_result(
         self,
         receipt: Receipt,
-        items: Sequence[ReceiptItemCreateRequest],
+        items: Sequence[ReceiptItemData],
         raw_ocr_text: str | None,
         saved_at: datetime,
         status: ReceiptStatus,
