@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from backend.app.parsing.formats import DATE, MONEY, decimal_number
 from backend.app.parsing.item_parser import ReceiptItemParser
+from backend.app.parsing.totals import check_receipt_totals
 from backend.app.schemas.parsing import ReceiptParsingResult
 
 TOTAL_LABEL = re.compile(
@@ -38,8 +39,13 @@ def _unique[T](values: list[T]) -> list[T]:
 
 
 class ReceiptParser:
-    def __init__(self, timezone: str | None = None) -> None:
+    def __init__(
+        self,
+        timezone: str | None = None,
+        total_tolerance: Decimal = Decimal("0.05"),
+    ) -> None:
         self.timezone = ZoneInfo(timezone) if timezone is not None else None
+        self.total_tolerance = total_tolerance
 
     def parse(self, raw_text: str) -> ReceiptParsingResult:
         lines = _lines(raw_text)
@@ -47,13 +53,23 @@ class ReceiptParser:
         purchased_at, date_warnings = self._datetime(lines)
         total, total_warnings = self._total(lines)
         items, item_warnings = ReceiptItemParser().parse(raw_text)
+        totals_check, check_warnings = check_receipt_totals(
+            items, total, tolerance=self.total_tolerance
+        )
         return ReceiptParsingResult(
             raw_ocr_text=raw_text,
             store_name=store,
             purchase_datetime=purchased_at,
             total_amount=total,
             items=items,
-            warnings=(*store_warnings, *date_warnings, *total_warnings, *item_warnings),
+            warnings=(
+                *store_warnings,
+                *date_warnings,
+                *total_warnings,
+                *item_warnings,
+                *check_warnings,
+            ),
+            totals_check=totals_check,
         )
 
     def _store(self, lines: list[str]) -> tuple[str | None, tuple[str, ...]]:

@@ -92,5 +92,8 @@ def get_receipt_pipeline() -> ReceiptPipeline:
         object_storage=get_object_storage(),
         orientation_normalizer=get_image_orientation_normalizer(),
         ocr_provider=get_ocr_provider(),
-        parser=ReceiptParser(timezone=parsing_settings.timezone),
+        parser=ReceiptParser(
+            timezone=parsing_settings.timezone,
+            total_tolerance=parsing_settings.total_tolerance,
+        ),
     )

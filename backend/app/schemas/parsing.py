@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,26 @@ class ParsedReceiptItem(BaseModel):
     confidence: Confidence | None = None
 
 
+class TotalsCheckStatus(StrEnum):
+    MATCHED = "matched"
+    WITHIN_TOLERANCE = "within_tolerance"
+    MISMATCH = "mismatch"
+    INCOMPLETE = "incomplete"
+    MISSING_TOTAL = "missing_total"
+    NO_ITEMS = "no_items"
+
+
+class ReceiptTotalsCheck(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: TotalsCheckStatus
+    items_sum: Amount | None
+    difference: Decimal | None = Field(allow_inf_nan=False)
+    tolerance: Amount
+    item_count: int = Field(ge=0)
+    missing_amount_count: int = Field(ge=0)
+
+
 class ReceiptParsingReport(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -30,6 +51,7 @@ class ReceiptParsingReport(BaseModel):
     purchase_datetime: datetime | None = None
     total_amount: Amount | None = None
     warnings: tuple[NonBlankText, ...] = ()
+    totals_check: ReceiptTotalsCheck | None = None
 
 
 class ReceiptParsingResult(ReceiptParsingReport):

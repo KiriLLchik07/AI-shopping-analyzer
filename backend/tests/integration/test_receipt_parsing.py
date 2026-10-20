@@ -374,3 +374,68 @@ def test_currency_and_date_formats_are_saved_and_exposed_in_api(
     body = response.json()
     assert Decimal(body["items"][0]["unit_price"]) == Decimal("100.50")
     assert Decimal(body["total_amount"]) == Decimal("201.00")
+
+
+@pytest.mark.parametrize(
+    ("raw", "status", "items_sum", "difference"),
+    [
+        ("Товар 100.00*1шт=100.00\nИТОГ 100.00", "matched", "100.00", "0.00"),
+        ("Товар 100.00*1шт=100.00\nИТОГ 100.05", "within_tolerance", "100.00", "-0.05"),
+        ("Товар 100.00*1шт=100.00\nИТОГ 110.00", "mismatch", "100.00", "-10.00"),
+        ("Товар 100.00*1шт=100.00\nИТОГ 90.00", "mismatch", "100.00", "10.00"),
+        ("Товар 10.00*1шт=10000000000.00\nИТОГ 10.00", "incomplete", None, None),
+        ("Товар 100.00*1шт=100.00", "missing_total", "100.00", None),
+        ("ИТОГ 100.00", "no_items", None, None),
+    ],
+)
+def test_totals_check_is_saved_and_available_in_api_without_failing_job(
+    receipt_owner, client, monkeypatch, raw, status, items_sum, difference
+):
+    receipt_id, user = receipt_owner
+    monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline(text=raw))
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.processing_error_code is None
+        assert receipt.processing_result_saved_at is not None
+        assert receipt.raw_ocr_text == raw
+        check = receipt.parsing_report["totals_check"]
+        assert check["status"] == status
+        assert check["items_sum"] == items_sum
+        assert check["difference"] == difference
+        assert check["tolerance"] == "0.05"
+        if status == "mismatch":
+            assert any(
+                "Сумма позиций" in warning
+                for warning in receipt.parsing_report["warnings"]
+            )
+            assert receipt.items[0].total_price == Decimal("100.00")
+        if status == "incomplete":
+            assert receipt.items[0].total_price is None
+            assert check["missing_amount_count"] == 1
+        original_report = receipt.parsing_report
+    jobs.process_receipt(str(receipt_id))
+    with SessionLocal() as session:
+        assert session.get(Receipt, receipt_id).parsing_report == original_report
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    for url in (f"/api/receipts/{receipt_id}", "/api/receipts"):
+        response = client.get(url)
+        assert response.status_code == 200
+        body = response.json()
+        if url == "/api/receipts":
+            body = body["items"][0]
+        assert body["parsing_report"]["totals_check"] == check
+
+
+def test_api_accepts_report_saved_before_totals_check_was_added(
+    receipt_owner, client, monkeypatch
+):
+    receipt_id, user = receipt_owner
+    with SessionLocal.begin() as session:
+        receipt = session.get(Receipt, receipt_id)
+        receipt.parsing_report = {"total_amount": "100.00", "warnings": []}
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
+    response = client.get(f"/api/receipts/{receipt_id}")
+    assert response.status_code == 200
+    assert response.json()["parsing_report"]["totals_check"] is None

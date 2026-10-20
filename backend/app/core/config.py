@@ -1,4 +1,5 @@
 import itertools
+from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -70,6 +71,13 @@ class MetricsSettings(BaseSettings):
 
 class ParsingSettings(BaseSettings):
     timezone: str | None = None
+    total_tolerance: Decimal = Field(
+        default=Decimal("0.05"),
+        ge=0,
+        max_digits=12,
+        decimal_places=2,
+        allow_inf_nan=False,
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="PARSING_",
