@@ -6,9 +6,11 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend.app.categorization.catalog import DEFAULT_CATEGORIES, default_category_id
 from backend.app.db.base import Base
 from backend.app.db.session import SessionLocal, engine
 from backend.app.main import app
+from backend.app.models import Category
 from backend.app.services.session_service import redis_client
 
 RUN_INTEGRATION_TESTS = os.getenv("RUN_INTEGRATION_TESTS") == "1"
@@ -43,6 +45,13 @@ def clean_storage() -> Generator[None, None, None]:
 
     with engine.begin() as connection:
         connection.execute(text("TRUNCATE TABLE users, categories CASCADE"))
+        connection.execute(
+            Category.__table__.insert(),
+            [
+                {"category_id": default_category_id(name), "category_name": name}
+                for name in DEFAULT_CATEGORIES
+            ],
+        )
 
     yield
 

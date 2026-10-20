@@ -4,6 +4,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from backend.app.api.dependencies.auth import get_current_user
+from backend.app.categorization.catalog import default_category_id
 from backend.app.core.exceptions import ReceiptProcessingConflictError
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
@@ -87,7 +88,7 @@ def test_add_item_persists_all_values_and_keeps_existing_position(receipt_item, 
         assert session.get(Receipt, receipt_id).items_revision == 1
 
 
-def test_minimal_item_allows_unknown_prices_and_no_category(receipt_item, client):
+def test_minimal_item_allows_unknown_prices_and_suggests_fallback(receipt_item, client):
     receipt_id, _, _ = receipt_item
     response = client.post(
         f"/api/receipts/{receipt_id}/items", json={"raw_name": "Товар", "quantity": 1}
@@ -95,7 +96,8 @@ def test_minimal_item_allows_unknown_prices_and_no_category(receipt_item, client
     assert response.status_code == 201
     assert response.json()["unit_price"] is None
     assert response.json()["total_price"] is None
-    assert response.json()["category_id"] is None
+    assert response.json()["category_id"] == str(default_category_id("прочее"))
+    assert response.json()["category_confirmed_at"] is None
     assert response.json()["discount_amount"] == "0.00"
 
 

@@ -1,5 +1,6 @@
+from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,6 +19,12 @@ class ReceiptItemData(BaseModel):
     raw_name: str = Field(min_length=1, max_length=256)
     normalized_name: str | None = Field(default=None, max_length=256)
     category_id: UUID | None = None
+    suggested_category_id: UUID | None = None
+    category_rule_version: str | None = None
+    category_source: Literal["automatic", "manual", "legacy"] = "automatic"
+    category_match: str | None = None
+    category_input: str | None = None
+    category_confirmed_at: datetime | None = None
     quantity: ItemQuantity | None = None
     unit: str | None = Field(default=None, max_length=100)
     weight: Decimal | None = Field(default=None, gt=0)

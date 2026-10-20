@@ -30,6 +30,9 @@ from backend.app.schemas.request import (
 )
 from backend.app.services.object_cleanup_service import cleanup_one
 from backend.app.services.receipt_arithmetic import validate_receipt_arithmetic
+from backend.app.services.receipt_categorization_service import (
+    ReceiptCategorizationService,
+)
 from backend.app.storage.exception import ObjectStorageError
 from backend.app.storage.interface import ObjectStorage
 
@@ -184,7 +187,15 @@ class ReceiptService:
 
         self._validate_category(payload.category_id)
 
-        item_data = payload.model_dump()
+        item_data = (
+            ReceiptCategorizationService(self.db_session)
+            .suggest_items((ReceiptItemData.model_validate(payload),))[0]
+            .model_dump()
+        )
+        if "category_id" in payload.model_fields_set:
+            item_data["category_id"] = payload.category_id
+            item_data["category_confirmed_at"] = datetime.now(timezone.utc)
+            item_data["category_source"] = "manual"
 
         receipt_item = self.repository.create_receipt_item(
             receipt_id=receipt.receipt_id, item_data=item_data
@@ -234,6 +245,40 @@ class ReceiptService:
 
         if "category_id" in update_data and update_data["category_id"] is not None:
             self._validate_category(update_data["category_id"])
+
+        if {"raw_name", "normalized_name"} & update_data.keys():
+            candidate = ReceiptItemData.model_validate(receipt_item).model_copy(
+                update=update_data
+            )
+            if "raw_name" in update_data and "normalized_name" not in update_data:
+                candidate = candidate.model_copy(update={"normalized_name": None})
+            suggestion = ReceiptCategorizationService(self.db_session).suggest_items(
+                (candidate,)
+            )[0]
+            update_data.update(
+                suggestion.model_dump(
+                    include={
+                        "suggested_category_id",
+                        "category_rule_version",
+                        "category_match",
+                        "category_input",
+                    }
+                )
+            )
+            legacy_category = (
+                receipt_item.category_rule_version is None
+                and receipt_item.category_id is not None
+            )
+            has_manual_category = (
+                receipt_item.category_source in {"manual", "legacy"} or legacy_category
+            )
+            if legacy_category and receipt_item.category_source != "manual":
+                update_data["category_source"] = "legacy"
+            if "category_id" not in update_data and not has_manual_category:
+                update_data["category_id"] = suggestion.suggested_category_id
+        if "category_id" in payload.model_fields_set:
+            update_data["category_confirmed_at"] = datetime.now(timezone.utc)
+            update_data["category_source"] = "manual"
 
         receipt_item = self.repository.update_receipt_item(
             receipt_item=receipt_item,
