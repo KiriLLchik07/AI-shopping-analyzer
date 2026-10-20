@@ -43,6 +43,16 @@ def test_manifest_covers_all_fixture_pairs():
         p.relative_to(DATASET_ROOT).as_posix()
         for p in (DATASET_ROOT / "texts").iterdir()
     }
+    evaluation = json.loads(
+        (DATASET_ROOT / MANIFEST["preprocessing_evaluation"]).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert evaluation["runtime"]["models"] == MANIFEST["runtime"]["models"]
+    assert evaluation["fixture_fingerprints"] == [
+        {key: sample[key] for key in ("id", "image_sha256", "expected_text_sha256")}
+        for sample in SAMPLES
+    ]
 
 
 @pytest.mark.parametrize("sample", SAMPLES, ids=lambda sample: sample["id"])

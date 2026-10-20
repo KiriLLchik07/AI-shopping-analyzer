@@ -128,5 +128,6 @@
       "baseline_cer": 0.09973045822102426,
       "expected_total": "230.42"
     }
-  ]
+  ],
+  "preprocessing_evaluation": "preprocessing-evaluation.json"
 }
