@@ -1,19 +1,28 @@
-const baseUrl = new URL(import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000')
+export function resolveApiOrigin(configured: string | undefined, browserOrigin?: string): URL {
+  const url = new URL(
+    configured === '' ? (browserOrigin ?? '') : (configured ?? 'http://localhost:8000'),
+  )
+  if (
+    !['http:', 'https:'].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw new Error('VITE_API_BASE_URL должен содержать только origin API')
+  }
+  return url
+}
+
+const baseUrl = resolveApiOrigin(
+  import.meta.env.VITE_API_BASE_URL,
+  typeof window === 'undefined' ? undefined : window.location.origin,
+)
 let sessionEpoch = 0
 
 export function resetApiSession() {
   sessionEpoch += 1
-}
-
-if (
-  !['http:', 'https:'].includes(baseUrl.protocol) ||
-  baseUrl.username ||
-  baseUrl.password ||
-  baseUrl.pathname !== '/' ||
-  baseUrl.search ||
-  baseUrl.hash
-) {
-  throw new Error('VITE_API_BASE_URL должен содержать только origin API')
 }
 
 export class ApiError extends Error {

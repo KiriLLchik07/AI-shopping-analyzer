@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apiJson, apiRequest, resetApiSession } from './client'
+import { apiJson, apiRequest, resetApiSession, resolveApiOrigin } from './client'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -10,6 +10,20 @@ function mockResponse(response: Response) {
 }
 
 describe('apiRequest', () => {
+  it('uses same-origin API requests for the Docker build', () => {
+    expect(resolveApiOrigin('', 'http://localhost:5173').origin).toBe('http://localhost:5173')
+    expect(resolveApiOrigin(undefined).origin).toBe('http://localhost:8000')
+  })
+
+  it.each([
+    'https://user:pass@example.com',
+    'https://example.com/api',
+    'https://example.com?key=value',
+    'https://example.com#hash',
+    'ftp://example.com',
+  ])('rejects invalid API origin %s', (origin) => {
+    expect(() => resolveApiOrigin(origin)).toThrow()
+  })
   it('sends cookies even if the caller specifies other credentials', async () => {
     const fetch = mockResponse(Response.json({ user_id: 'user' }))
     await expect(apiRequest('/api/auth/me', { credentials: 'omit' })).resolves.toEqual({
