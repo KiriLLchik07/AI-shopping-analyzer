@@ -1,13 +1,16 @@
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from sqlalchemy import delete, event, func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.categorization.catalog import default_category_id
+from backend.app.core.config import LlmSettings
 from backend.app.db.session import SessionLocal, engine
 from backend.app.llm.exceptions import (
     LlmConfigurationError,
@@ -18,6 +21,7 @@ from backend.app.llm.exceptions import (
 )
 from backend.app.llm.factory import get_llm_provider
 from backend.app.llm.interface import LlmProvider
+from backend.app.llm.ollama_provider import OllamaLlmProvider
 from backend.app.main import app
 from backend.app.models import Category, LlmReport, Receipt, ReceiptItem, User, UserRule
 from backend.app.models.enums import ReceiptStatus
@@ -477,6 +481,76 @@ def test_duplicate_actions_are_not_saved(owner, provider, client):
     ][0]["action"]
     assert client.post(URL, json=BODY).status_code == 502
     assert report_count() == 0
+
+
+@pytest.mark.parametrize(
+    "scenario,status,attempts,code",
+    [
+        ("timeout", 504, 3, "llm_timeout"),
+        ("unavailable", 503, 3, "llm_unavailable"),
+        ("missing_model", 503, 1, "llm_configuration_error"),
+        ("invalid_json", 502, 1, "llm_invalid_response"),
+    ],
+)
+def test_http_provider_failures_reach_api_safely(
+    owner, client, monkeypatch, caplog, scenario, status, attempts, code
+):
+    chat_calls = []
+
+    def handle(request):
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["completion"]})
+        chat_calls.append(request)
+        if scenario == "timeout":
+            raise httpx.ReadTimeout("PRIVATE TRANSPORT DETAILS", request=request)
+        if scenario == "unavailable":
+            return httpx.Response(503, text="PRIVATE SERVER ERROR")
+        if scenario == "missing_model":
+            return httpx.Response(404, text="PRIVATE MODEL DETAILS")
+        return httpx.Response(200, text="PRIVATE INVALID JSON")
+
+    adapter = OllamaLlmProvider(
+        LlmSettings(_env_file=None, retry_intervals_seconds=(0, 0)),
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_llm_provider, lambda: adapter)
+    response = client.post(URL, json=BODY)
+    assert response.status_code == status
+    assert response.json()["code"] == code
+    assert len(chat_calls) == attempts
+    assert "PRIVATE" not in response.text + caplog.text
+    assert "Traceback" not in response.text
+    assert report_count() == 0
+
+
+def test_recovery_after_two_http_failures_saves_one_report(owner, client, monkeypatch):
+    chat_calls = []
+    output = TestProvider().output
+
+    def handle(request):
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"capabilities": ["completion"]})
+        chat_calls.append(request)
+        if len(chat_calls) < 3:
+            return httpx.Response(503)
+        return httpx.Response(
+            200,
+            json={
+                "done": True,
+                "done_reason": "stop",
+                "message": {"role": "assistant", "content": json.dumps(output)},
+            },
+        )
+
+    adapter = OllamaLlmProvider(
+        LlmSettings(_env_file=None, retry_intervals_seconds=(0, 0)),
+        transport=httpx.MockTransport(handle),
+    )
+    monkeypatch.setitem(app.dependency_overrides, get_llm_provider, lambda: adapter)
+    response = client.post(URL, json=BODY)
+    assert response.status_code == 201, response.text
+    assert len(chat_calls) == 3
+    assert report_count() == 1
 
 
 @pytest.mark.llm

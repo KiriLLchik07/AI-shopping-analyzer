@@ -160,6 +160,38 @@ def test_retries_can_be_disabled():
     assert len(seen) == 1
 
 
+def test_timeout_while_reading_chat_body_closes_response_and_retries(monkeypatch):
+    attempts, sleeps, streams = [], [], []
+    monkeypatch.setattr("backend.app.llm.ollama_provider.time.sleep", sleeps.append)
+
+    class InterruptedStream(httpx.SyncByteStream):
+        closed = False
+
+        def __iter__(self):
+            yield b'{"message":'
+            raise httpx.ReadTimeout("PRIVATE READ DETAILS")
+
+        def close(self):
+            self.closed = True
+
+    def handle(req):
+        if req.url.path == "/api/show":
+            return httpx.Response(200, json=local_model())
+        attempts.append(req)
+        if len(attempts) == 1:
+            stream = InterruptedStream()
+            streams.append(stream)
+            return httpx.Response(200, stream=stream)
+        return httpx.Response(200, json=envelope())
+
+    assert (
+        provider(handle).generate(request(), response_model=Summary).summary == "Отчёт"
+    )
+    assert len(attempts) == 2
+    assert sleeps == [1]
+    assert streams[0].closed
+
+
 @pytest.mark.parametrize("path", ["/api/show", "/api/chat"])
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422, 302])
 def test_configuration_errors_and_redirects_are_not_retried(path, status):
