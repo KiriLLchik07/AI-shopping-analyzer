@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apiRequest } from './client'
+import { apiJson, apiRequest, resetApiSession } from './client'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -12,8 +12,9 @@ function mockResponse(response: Response) {
 describe('apiRequest', () => {
   it('sends cookies even if the caller specifies other credentials', async () => {
     const fetch = mockResponse(Response.json({ user_id: 'user' }))
-    await expect(apiRequest('/api/auth/me', { credentials: 'omit' }))
-      .resolves.toEqual({ user_id: 'user' })
+    await expect(apiRequest('/api/auth/me', { credentials: 'omit' })).resolves.toEqual({
+      user_id: 'user',
+    })
     const [url, options] = fetch.mock.calls[0]
     expect(String(url)).toBe('http://localhost:8000/api/auth/me')
     expect(options.credentials).toBe('include')
@@ -26,7 +27,9 @@ describe('apiRequest', () => {
     const controller = new AbortController()
     const body = JSON.stringify({ user_mail: 'test@example.com' })
     await apiRequest('/api/auth_login', {
-      method: 'POST', body, signal: controller.signal,
+      method: 'POST',
+      body,
+      signal: controller.signal,
       headers: { 'Content-Type': 'application/json' },
     })
     const options = fetch.mock.calls[0][1]
@@ -51,12 +54,21 @@ describe('apiRequest', () => {
   })
 
   it('preserves a safe provider error and correlation ID', async () => {
-    mockResponse(Response.json({ detail: 'Модель недоступна', code: 'llm_unavailable' }, {
-      status: 503, headers: { 'X-Correlation-ID': 'test-id' },
-    }))
+    mockResponse(
+      Response.json(
+        { detail: 'Модель недоступна', code: 'llm_unavailable' },
+        {
+          status: 503,
+          headers: { 'X-Correlation-ID': 'test-id' },
+        },
+      ),
+    )
     await expect(apiRequest('/api/llm/reports')).rejects.toMatchObject({
-      name: 'ApiError', status: 503, code: 'llm_unavailable',
-      message: 'Модель недоступна', correlationId: 'test-id',
+      name: 'ApiError',
+      status: 503,
+      code: 'llm_unavailable',
+      message: 'Модель недоступна',
+      correlationId: 'test-id',
     })
   })
 
@@ -71,17 +83,80 @@ describe('apiRequest', () => {
     })
   })
 
-  it.each(['https://example.org/api/auth/me', '//example.org/api/auth/me', '/api/../../secret'])
-    ('rejects paths outside this API: %s', async (path) => {
+  it.each(['https://example.org/api/auth/me', '//example.org/api/auth/me', '/api/../../secret'])(
+    'rejects paths outside this API: %s',
+    async (path) => {
       const fetch = vi.fn()
       vi.stubGlobal('fetch', fetch)
       await expect(apiRequest(path)).rejects.toThrow()
       expect(fetch).not.toHaveBeenCalled()
-    })
+    },
+  )
+
+  it('expires the current session on a protected endpoint 401', async () => {
+    const target = new EventTarget()
+    const expired = vi.fn()
+    target.addEventListener('session-expired', expired)
+    vi.stubGlobal('window', target)
+    mockResponse(Response.json({ detail: 'Session expired' }, { status: 401 }))
+    await expect(apiRequest('/api/receipts')).rejects.toMatchObject({ status: 401 })
+    expect(expired).toHaveBeenCalledOnce()
+  })
+
+  it('ignores a late 401 belonging to an earlier session', async () => {
+    const target = new EventTarget()
+    const expired = vi.fn()
+    target.addEventListener('session-expired', expired)
+    vi.stubGlobal('window', target)
+    let finish!: (response: Response) => void
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            finish = resolve
+          }),
+      ),
+    )
+    const pending = apiRequest('/api/llm/reports/monthly')
+    const result = expect(pending).rejects.toMatchObject({ status: 401 })
+    resetApiSession()
+    finish(Response.json({ detail: 'Old session expired' }, { status: 401 }))
+    await result
+    expect(expired).not.toHaveBeenCalled()
+  })
 
   it('preserves cancellation', async () => {
     const error = new DOMException('Aborted', 'AbortError')
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(error))
     await expect(apiRequest('/api/auth/me')).rejects.toBe(error)
+  })
+
+  it('preserves a saved receipt ID after an unconfirmed enqueue', async () => {
+    mockResponse(
+      Response.json(
+        {
+          detail: {
+            code: 'receipt_enqueue_unconfirmed',
+            message: 'Чек сохранён',
+            receipt_id: 'receipt-id',
+          },
+        },
+        { status: 503 },
+      ),
+    )
+    await expect(apiRequest('/api/receipts/upload')).rejects.toMatchObject({
+      message: 'Чек сохранён',
+      code: 'receipt_enqueue_unconfirmed',
+      details: { receipt_id: 'receipt-id' },
+    })
+  })
+
+  it('serializes JSON and preserves decimal strings', async () => {
+    const fetch = mockResponse(Response.json({}))
+    await apiJson('/api/receipts/id', 'PATCH', { total_amount: '129.90' })
+    expect(fetch.mock.calls[0][1].body).toBe('{"total_amount":"129.90"}')
+    expect(fetch.mock.calls[0][1].headers.get('Content-Type')).toBe('application/json')
+    expect(fetch.mock.calls[0][1].credentials).toBe('include')
   })
 })
