@@ -5,12 +5,20 @@ from backend.app.core.exceptions import (
     AuthenticationError,
     BusinessRuleError,
     ConflictError,
+    LlmReportInputError,
+    LlmReportStorageUnavailableError,
     NotFoundError,
     ReceiptDeletionUnavailableError,
     ReceiptImageUnavailableError,
     ReceiptUploadUnavailableError,
     TooManyRequestsError,
     UploadTooLargeError,
+)
+from backend.app.llm.exceptions import (
+    LlmProviderError,
+    LlmResponseValidationError,
+    LlmTimeoutError,
+    NoConfirmedPurchasesError,
 )
 
 
@@ -102,7 +110,62 @@ def receipt_deletion_unavailable_handler(
     return JSONResponse(status_code=503, content={"detail": error.detail})
 
 
+def llm_provider_handler(_request: Request, error: LlmProviderError) -> JSONResponse:
+    if isinstance(error, LlmTimeoutError):
+        status = 504
+    elif isinstance(error, LlmResponseValidationError):
+        status = 502
+    else:
+        status = 503
+    return JSONResponse(
+        status_code=status,
+        content={"detail": type(error).message, "code": error.code},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def llm_no_purchases_handler(
+    _request: Request, _error: NoConfirmedPurchasesError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "detail": "За выбранный месяц нет подтверждённых покупок.",
+            "code": "llm_no_confirmed_purchases",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def llm_input_handler(_request: Request, _error: LlmReportInputError) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": LlmReportInputError.default_detail,
+            "code": "llm_invalid_input",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def llm_storage_handler(
+    _request: Request, _error: LlmReportStorageUnavailableError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": LlmReportStorageUnavailableError.default_detail,
+            "code": "llm_storage_unavailable",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.add_exception_handler(LlmProviderError, llm_provider_handler)
+    app.add_exception_handler(NoConfirmedPurchasesError, llm_no_purchases_handler)
+    app.add_exception_handler(LlmReportInputError, llm_input_handler)
+    app.add_exception_handler(LlmReportStorageUnavailableError, llm_storage_handler)
     app.add_exception_handler(
         ReceiptDeletionUnavailableError, receipt_deletion_unavailable_handler
     )

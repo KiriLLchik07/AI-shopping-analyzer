@@ -6,6 +6,7 @@ from backend.app.api.auth import router as auth_router
 from backend.app.api.categories import router as category_router
 from backend.app.api.exception_handlers import register_exception_handlers
 from backend.app.api.health import router as health_router
+from backend.app.api.llm import router as llm_router
 from backend.app.api.processing_metrics import router as processing_metrics_router
 from backend.app.api.receipts import router as receipts_router
 from backend.app.core.logging import configure_logging, normalize_correlation_id
@@ -24,6 +25,7 @@ app.include_router(processing_metrics_router)
 app.include_router(receipts_router)
 app.include_router(category_router)
 app.include_router(analytics_router)
+app.include_router(llm_router)
 
 register_exception_handlers(app)
 
