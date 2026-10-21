@@ -23,9 +23,19 @@ class MonthlyReportGenerator:
         try:
             result = self.provider.generate(request, response_model=MonthlyReportResult)
             if isinstance(result, (str, bytes, bytearray)):
-                return MonthlyReportResult.model_validate_json(result)
-            return MonthlyReportResult.model_validate(result)
+                validated = MonthlyReportResult.model_validate_json(result)
+            else:
+                validated = MonthlyReportResult.model_validate(result)
         except ValidationError:
             raise LlmResponseValidationError(
                 "Модель вернула отчёт неверного формата. Попробуйте ещё раз."
             ) from None
+        actions = {
+            " ".join(item.action.casefold().split())
+            for item in validated.recommendations
+        }
+        if len(actions) != len(validated.recommendations):
+            raise LlmResponseValidationError(
+                "Модель вернула повторяющиеся рекомендации. Попробуйте ещё раз."
+            )
+        return validated

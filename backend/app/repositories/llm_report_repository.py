@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import LlmReport, User
@@ -14,6 +14,43 @@ from backend.app.schemas.llm_report import (
 class LlmReportRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+
+    def get_for_user(self, user_id: UUID, report_id: UUID) -> LlmReport | None:
+        return self.session.scalar(
+            select(LlmReport).where(
+                LlmReport.user_id == user_id, LlmReport.report_id == report_id
+            )
+        )
+
+    def count_for_user(self, user_id: UUID) -> int:
+        return self.session.scalar(
+            select(func.count())
+            .select_from(LlmReport)
+            .where(LlmReport.user_id == user_id)
+        )
+
+    def list_for_user(self, user_id: UUID, limit: int, offset: int):
+        return (
+            self.session.execute(
+                select(
+                    LlmReport.report_id,
+                    LlmReport.period_start,
+                    LlmReport.period_end,
+                    LlmReport.timezone,
+                    LlmReport.prompt_version,
+                    LlmReport.schema_version,
+                    LlmReport.provider_name,
+                    LlmReport.model_name,
+                    LlmReport.created_at,
+                )
+                .where(LlmReport.user_id == user_id)
+                .order_by(LlmReport.created_at.desc(), LlmReport.report_id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+            .mappings()
+            .all()
+        )
 
     def lock_owner(self, user_id: UUID) -> bool:
         owner = self.session.scalar(

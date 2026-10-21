@@ -115,3 +115,7 @@ class LlmReportInputError(ApplicationError):
 
 class LlmReportStorageUnavailableError(ApplicationError):
     default_detail = "Не удалось прочитать или сохранить отчёт. Попробуйте позже."
+
+
+class LlmReportNotFoundError(NotFoundError):
+    default_detail = "Отчёт не найден."

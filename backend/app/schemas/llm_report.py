@@ -148,15 +148,31 @@ class LlmProviderInfo(ReportDto):
     model_name: str = Field(min_length=1, max_length=128, pattern=r"\S")
 
 
-class LlmReportResponse(LlmProviderInfo):
+class LlmReportSummary(LlmProviderInfo):
     model_config = ConfigDict(from_attributes=True)
 
     report_id: UUID
     period_start: date
     period_end: date
     timezone: str
-    input_data: MonthlyReportData
-    report_data: MonthlyReportResult
     prompt_version: str
     schema_version: str
     created_at: AwareDatetime
+
+
+class LlmReportResponse(LlmReportSummary):
+    input_data: MonthlyReportData
+    report_data: MonthlyReportResult
+
+
+class LlmReportListParams(ReportDto):
+    page: int = Field(default=1, ge=1, le=1_000_000)
+    page_size: int = Field(default=20, ge=1, le=100)
+
+
+class LlmReportListResponse(ReportDto):
+    items: tuple[LlmReportSummary, ...]
+    page: int
+    page_size: int
+    total: Count
+    total_pages: Count

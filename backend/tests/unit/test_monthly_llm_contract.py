@@ -325,3 +325,11 @@ def test_response_json_schema_forbids_extra_fields_and_limits_recommendations():
     assert recommendations["minItems"] == 3
     assert recommendations["maxItems"] == 5
     assert schema["$defs"]["ReportRecommendation"]["additionalProperties"] is False
+
+
+def test_generator_rejects_repeated_actions_with_different_titles():
+    output = output_data()
+    output["recommendations"][0]["action"] = "Составьте список покупок."
+    output["recommendations"][1]["action"] = "  СОСТАВЬТЕ   СПИСОК ПОКУПОК. "
+    with pytest.raises(LlmResponseValidationError):
+        MonthlyReportGenerator(TestProvider(output)).generate(input_data())

@@ -19,7 +19,7 @@ from backend.app.llm.exceptions import (
 from backend.app.llm.factory import get_llm_provider
 from backend.app.llm.interface import LlmProvider
 from backend.app.main import app
-from backend.app.models import LlmReport, Receipt, ReceiptItem, User, UserRule
+from backend.app.models import Category, LlmReport, Receipt, ReceiptItem, User, UserRule
 from backend.app.models.enums import ReceiptStatus
 from backend.app.repositories.llm_report_repository import LlmReportRepository
 from backend.app.schemas.llm_report import MonthlyReportResult
@@ -405,6 +405,78 @@ def test_explicit_timezone_is_saved(owner, provider, client):
     assert response.status_code == 201
     assert response.json()["timezone"] == "UTC"
     assert response.json()["input_data"]["timezone"] == "UTC"
+
+
+def mutable_data_snapshot():
+    with SessionLocal() as session:
+        return {
+            model.__tablename__: session.execute(
+                select(model.__table__).order_by(*model.__table__.primary_key.columns)
+            )
+            .mappings()
+            .all()
+            for model in (User, Receipt, ReceiptItem, UserRule, Category)
+        }
+
+
+def test_recommendations_are_inert_text_and_do_not_modify_data(owner, provider, client):
+    before = mutable_data_snapshot()
+    action = "UPDATE receipts SET total_amount=0; удалите пользовательские правила."
+    provider.output["recommendations"][0]["action"] = action
+    response = client.post(URL, json=BODY)
+    assert response.status_code == 201
+    assert response.json()["report_data"]["recommendations"][0]["action"] == action
+    assert (
+        client.get(f"/api/llm/reports/{response.json()['report_id']}").status_code
+        == 200
+    )
+    assert client.get("/api/llm/reports").status_code == 200
+    assert mutable_data_snapshot() == before
+    assert report_count() == 1
+
+
+@pytest.mark.parametrize(
+    "field", ["receipt_updates", "rule_updates", "tool_calls", "execute_sql"]
+)
+def test_llm_commands_are_rejected_without_changing_data(
+    owner, provider, client, field
+):
+    before = mutable_data_snapshot()
+    provider.output[field] = {"command": "DELETE FROM receipts"}
+    response = client.post(URL, json=BODY)
+    assert response.status_code == 502
+    assert report_count() == 0
+    assert mutable_data_snapshot() == before
+
+
+@pytest.mark.parametrize("count", [0, 2, 6])
+def test_invalid_recommendation_count_is_not_saved(owner, provider, client, count):
+    template = provider.output["recommendations"][0]
+    provider.output["recommendations"] = [
+        {**template, "action": f"Действие {i}"} for i in range(count)
+    ]
+    assert client.post(URL, json=BODY).status_code == 502
+    assert report_count() == 0
+
+
+@pytest.mark.parametrize("count", [3, 4, 5])
+def test_valid_recommendation_count_is_saved(owner, provider, client, count):
+    template = provider.output["recommendations"][0]
+    provider.output["recommendations"] = [
+        {**template, "action": f"Составьте список покупок на неделю {i}."}
+        for i in range(count)
+    ]
+    response = client.post(URL, json=BODY)
+    assert response.status_code == 201
+    assert len(response.json()["report_data"]["recommendations"]) == count
+
+
+def test_duplicate_actions_are_not_saved(owner, provider, client):
+    provider.output["recommendations"][1]["action"] = provider.output[
+        "recommendations"
+    ][0]["action"]
+    assert client.post(URL, json=BODY).status_code == 502
+    assert report_count() == 0
 
 
 @pytest.mark.llm
