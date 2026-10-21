@@ -11,6 +11,39 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 
+class CorsSettings(BaseSettings):
+    allow_origins: tuple[str, ...] = ("http://localhost:5173",)
+
+    model_config = SettingsConfigDict(
+        env_prefix="CORS_",
+        env_file=BACKEND_ROOT / ".env.backend",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
+    )
+
+    @field_validator("allow_origins")
+    @classmethod
+    def validate_origins(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        for value in values:
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or not parsed.hostname
+                or "*" in value
+                or value != value.strip()
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+                or parsed.port == 0
+                or value != f"{parsed.scheme}://{parsed.netloc}"
+            ):
+                raise ValueError("CORS_ALLOW_ORIGINS must contain exact HTTP origins")
+        return tuple(dict.fromkeys(values))
+
+
 class ImageSettings(BaseSettings):
     orientation_apply_model_rotation: bool = False
     orientation_min_confidence: float = Field(
@@ -239,6 +272,7 @@ class Settings(BaseSettings):
 
 
 setting = Settings()
+cors_settings = CorsSettings()
 image_settings = ImageSettings()
 ocr_settings = OcrSettings()
 metrics_settings = MetricsSettings()
