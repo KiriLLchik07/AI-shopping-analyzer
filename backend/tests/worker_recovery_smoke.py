@@ -3,6 +3,7 @@ import signal
 import subprocess
 import sys
 import time
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from rq.job import Job, JobStatus
@@ -11,12 +12,13 @@ from sqlalchemy import select
 from backend.app.db.base import Base
 from backend.app.db.session import SessionLocal, engine
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.schemas.request import ReceiptItemCreateRequest
 from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.workers import jobs
-from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
+from backend.app.workers.queue import queue_connection, receipt_job_id, receipt_queue
+from backend.app.workers.receipt_dispatcher import advance_due_receipt
 from backend.app.workers.retry_policy import receipt_work_horse_killed_handler
 from backend.app.workers.worker import CorrelationWorker
 
@@ -65,7 +67,7 @@ def child_worker():
 def run_scenario(kill_parent):
     processes = []
     ready_key = f"recovery-smoke:{uuid4()}"
-    job = None
+    job = retry_job = None
     with SessionLocal.begin() as session:
         user = User(
             user_name="Smoke",
@@ -73,7 +75,9 @@ def run_scenario(kill_parent):
             user_mail=f"{uuid4()}@example.com",
             user_password_hash="test",
         )
-        receipt = Receipt(user=user, image_object_key="smoke.jpg")
+        receipt = Receipt(
+            user=user, image_object_key="smoke.jpg", ocr_correlation_id=str(uuid4())
+        )
         session.add(receipt)
         session.flush()
         receipt_id, user_id = receipt.receipt_id, user.user_id
@@ -93,7 +97,8 @@ def run_scenario(kill_parent):
         return process
 
     try:
-        job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
+        assert advance_due_receipt()
+        job = Job.fetch(receipt_job_id(receipt_id, 1), connection=queue_connection)
         cid = job.meta["correlation_id"]
         first = spawn("block")
         deadline = time.monotonic() + 30
@@ -105,46 +110,37 @@ def run_scenario(kill_parent):
         if kill_parent:
             os.killpg(first.pid, signal.SIGKILL)
             first.wait(timeout=10)
-            # Accelerate only this crashed execution's expiry. Cleanup itself
-            # is performed by a newly started real CorrelationWorker.
-            registry = receipt_queue.started_job_registry
-            for job_id, execution_id in registry.get_job_and_execution_ids(
-                cleanup=False
-            ):
-                if job_id == job.id:
-                    queue_connection.zadd(registry.key, {f"{job_id}:{execution_id}": 0})
-            assert spawn("success").wait(timeout=30) == 0
+            # Simulate expiry of the dead worker's lease in PostgreSQL.
+            with SessionLocal.begin() as session:
+                session.get(Receipt, receipt_id).ocr_due_at = datetime.now(UTC)
+            assert advance_due_receipt()
         else:
             os.kill(int(horse_pid), signal.SIGKILL)
             assert first.wait(timeout=30) == 0
 
-        job.refresh()
-        assert job.get_status() == JobStatus.SCHEDULED
-        assert job.retries_left == 2
-        with SessionLocal() as session:
+        with SessionLocal.begin() as session:
             receipt = session.get(Receipt, receipt_id)
-            assert receipt.status == ReceiptStatus.FAILED
-            assert receipt.processing_error_code == "processing_interrupted"
+            assert receipt.processing_status == ProcessingStatus.RETRY_SCHEDULED
+            assert receipt.automatic_ocr_retries == 1
+            receipt.ocr_due_at = datetime.now(UTC)
+            version = receipt.processing_version
 
-        # Avoid waiting for backoff while still using RQ's real scheduler.
-        queue_connection.zadd(receipt_queue.scheduled_job_registry.key, {job.id: 0})
+        assert advance_due_receipt()
+        retry_job = Job.fetch(
+            receipt_job_id(receipt_id, version), connection=queue_connection
+        )
         assert spawn("success").wait(timeout=30) == 0
-        job.refresh()
-        assert job.get_status() == JobStatus.FINISHED
-        assert job.meta["correlation_id"] == cid
-        assert job.retries_left == 2
+        assert retry_job.get_status() == JobStatus.FINISHED
+        assert retry_job.meta["correlation_id"] == cid
         with SessionLocal() as session:
             receipt = session.get(Receipt, receipt_id)
-            assert receipt.status == ReceiptStatus.NEED_REVIEW
+            assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
+            assert receipt.processing_status == ProcessingStatus.SUCCEEDED
             assert receipt.processing_error_code is None
-            assert (
-                len(
-                    session.scalars(
-                        select(ReceiptItem).where(ReceiptItem.receipt_id == receipt_id)
-                    ).all()
-                )
-                == 1
-            )
+            items = session.scalars(
+                select(ReceiptItem).where(ReceiptItem.receipt_id == receipt_id)
+            ).all()
+            assert len(items) == 1
         print(
             f"PASS: {'worker process group' if kill_parent else 'work horse'} killed and recovered",
             flush=True,
@@ -155,8 +151,9 @@ def run_scenario(kill_parent):
                 os.killpg(process.pid, signal.SIGKILL)
                 process.wait(timeout=10)
         queue_connection.delete(ready_key)
-        if job is not None:
-            job.delete()
+        for queued_job in (job, retry_job):
+            if queued_job is not None:
+                queued_job.delete()
         with SessionLocal.begin() as session:
             user = session.get(User, user_id)
             if user is not None:
