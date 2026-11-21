@@ -1,9 +1,10 @@
 from uuid import UUID
 
+from pydantic import BaseModel, ConfigDict
+
 from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.parsing import ReceiptParsingResult
-from pydantic import BaseModel, ConfigDict
 
 
 class ReceiptPreprocessingResult(BaseModel):

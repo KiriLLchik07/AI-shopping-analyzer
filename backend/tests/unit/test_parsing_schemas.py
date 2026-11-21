@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from backend.app.schemas.parsing import ParsedReceiptItem, ReceiptParsingResult
 from pydantic import ValidationError
+
+from backend.app.schemas.parsing import ParsedReceiptItem, ReceiptParsingResult
 
 
 def test_complete_receipt_preserves_fractional_quantity_and_exact_amounts():
