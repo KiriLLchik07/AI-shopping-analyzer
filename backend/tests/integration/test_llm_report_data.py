@@ -13,7 +13,7 @@ from backend.app.core.config import AnalyticsSettings
 from backend.app.db.session import SessionLocal, engine
 from backend.app.llm.prompts.monthly_v1 import build_monthly_request
 from backend.app.models import Receipt, ReceiptItem, User, UserRule
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ReceiptReviewStatus
 from backend.app.repositories.analytics_repository import AnalyticsRepository
 from backend.app.repositories.llm_report_data_repository import LlmReportDataRepository
 from backend.app.schemas.llm_report import MonthlyReportParams
@@ -37,12 +37,14 @@ def user(email):
     )
 
 
-def receipt(owner, at, amount, *, status=ReceiptStatus.COMPLETED, confirmed=True):
+def receipt(
+    owner, at, amount, *, receipt_status=ReceiptReviewStatus.CONFIRMED, confirmed=True
+):
     return Receipt(
         user=owner,
         purchase_datetime=at,
         total_amount=Decimal(amount),
-        status=status,
+        receipt_status=receipt_status,
         confirmed_at=CONFIRMED_AT if confirmed else None,
         image_object_key="PRIVATE-IMAGE-KEY",
         raw_ocr_text="PRIVATE-OCR-TEXT",
@@ -92,9 +94,14 @@ def monthly_data(db_session):
             UserRule(user=owner, rule_text="PRIVATE-DISABLED-RULE", is_active=False),
             UserRule(user=foreign, rule_text="PRIVATE-FOREIGN-RULE"),
             *[
-                receipt(owner, datetime(2026, 10, 5, tzinfo=UTC), "999", status=status)
-                for status in ReceiptStatus
-                if status != ReceiptStatus.COMPLETED
+                receipt(
+                    owner,
+                    datetime(2026, 10, 5, tzinfo=UTC),
+                    "999",
+                    receipt_status=receipt_status,
+                )
+                for receipt_status in ReceiptReviewStatus
+                if receipt_status != ReceiptReviewStatus.CONFIRMED
             ],
         ]
     )

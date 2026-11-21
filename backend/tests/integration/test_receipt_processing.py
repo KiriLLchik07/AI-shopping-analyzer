@@ -13,7 +13,7 @@ from backend.app.core.receipt_processing_errors import get_safe_processing_error
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.ocr.exceptions import OcrConfigurationError, OcrRecognitionError
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
@@ -52,10 +52,16 @@ def receipt_id() -> UUID:
         receipt = Receipt(
             user=user,
             image_object_key="receipts/processing-test.jpg",
+            processing_status=ProcessingStatus.QUEUED,
         )
         session.add(receipt)
         session.flush()
         return receipt.receipt_id
+
+
+def set_processing_status(receipt_id, status):
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).processing_status = status
 
 
 def make_result() -> ReceiptProcessingResult:
@@ -114,7 +120,7 @@ def test_ocr_is_committed_before_parser_and_retained_after_failure(
         assert raw_text == text
         with SessionLocal() as session:
             receipt = session.get(Receipt, receipt_id)
-            assert receipt.status == ReceiptStatus.PARSING
+            assert receipt.processing_status == ProcessingStatus.PARSING
             assert receipt.raw_ocr_text == text
             assert receipt.ocr_confidence == confidence
         raise NotImplementedError("Parser is not implemented")
@@ -125,7 +131,7 @@ def test_ocr_is_committed_before_parser_and_retained_after_failure(
         jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_status == ProcessingStatus.FAILED
         assert receipt.processing_result_saved_at is None
         assert receipt.items == []
         user = receipt.user
@@ -137,7 +143,7 @@ def test_ocr_is_committed_before_parser_and_retained_after_failure(
         body = body["items"][0] if url == "/api/receipts" else body
         assert body["raw_ocr_text"] == text
         assert body["ocr_confidence"] == confidence
-        assert body["status"] == "failed"
+        assert body["processing_status"] == "failed"
 
 
 def start_ocr(receipt_id):
@@ -145,8 +151,8 @@ def start_ocr(receipt_id):
     assert service.start_processing(receipt_id) is not None
     assert service.advance_status(
         receipt_id,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
     )
     return service
 
@@ -175,6 +181,7 @@ def test_new_attempt_clears_ocr_and_rejects_old_results(receipt_id, reprocess):
         with SessionLocal() as session:
             receipt = session.get(Receipt, receipt_id)
             assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
+    set_processing_status(receipt_id, ProcessingStatus.QUEUED)
     assert service.start_processing(receipt_id, version) is not None
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
@@ -182,8 +189,8 @@ def test_new_attempt_clears_ocr_and_rejects_old_results(receipt_id, reprocess):
     assert not service.save_ocr_result(receipt_id, old, version)
     assert service.advance_status(
         receipt_id,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
         version,
     )
     if reprocess:
@@ -198,18 +205,18 @@ def test_new_attempt_clears_ocr_and_rejects_old_results(receipt_id, reprocess):
 
 
 @pytest.mark.parametrize(
-    "status", [s for s in ReceiptStatus if s != ReceiptStatus.OCR_PROCESSING]
+    "status", [s for s in ProcessingStatus if s != ProcessingStatus.OCR_PROCESSING]
 )
 def test_ocr_result_rejected_in_wrong_status(receipt_id, status):
     with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = status
+        session.get(Receipt, receipt_id).processing_status = status
     assert not ReceiptProcessingService(SessionLocal).save_ocr_result(
         receipt_id,
         OcrResult(raw_text="late result", confidence=0.5),
     )
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == status
+        assert receipt.processing_status == status
         assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
 
 
@@ -217,9 +224,12 @@ def test_ocr_save_rejects_missing_and_finished_receipt(receipt_id):
     service = ReceiptProcessingService(SessionLocal)
     result = OcrResult(raw_text="late result", confidence=0.5)
     assert not service.save_ocr_result(uuid4(), result)
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service.save_result(receipt_id, make_result())
     with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = ReceiptStatus.OCR_PROCESSING
+        session.get(
+            Receipt, receipt_id
+        ).processing_status = ProcessingStatus.OCR_PROCESSING
     assert not service.save_ocr_result(receipt_id, result)
 
 
@@ -243,7 +253,7 @@ def test_concurrent_ocr_saves_keep_one_consistent_result(receipt_id):
     winner = results[outcomes.index(True)]
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.PARSING
+        assert receipt.processing_status == ProcessingStatus.PARSING
         assert receipt.raw_ocr_text == winner.raw_text
         assert receipt.ocr_confidence == winner.confidence
 
@@ -263,7 +273,7 @@ def test_ocr_and_status_rollback_together(receipt_id, monkeypatch):
         service.save_ocr_result(receipt_id, OcrResult(raw_text="text", confidence=0.9))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.OCR_PROCESSING
+        assert receipt.processing_status == ProcessingStatus.OCR_PROCESSING
         assert receipt.raw_ocr_text is None and receipt.ocr_confidence is None
 
 
@@ -279,7 +289,7 @@ def test_provider_failure_marks_receipt_failed_before_parsing(receipt_id, monkey
     parser.assert_not_called()
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_status == ProcessingStatus.FAILED
         assert receipt.processing_error_code == "ocr_failed"
         assert receipt.raw_ocr_text is None
         assert receipt.ocr_confidence is None
@@ -337,7 +347,7 @@ def test_orientation_report_is_saved_before_ocr_failure_and_visible_in_api(
         def recognize(self, image):
             with SessionLocal() as session:
                 receipt = session.get(Receipt, receipt_id)
-                assert receipt.status == ReceiptStatus.OCR_PROCESSING
+                assert receipt.processing_status == ProcessingStatus.OCR_PROCESSING
                 assert receipt.orientation_report == report.model_dump(mode="json")
             raise ValueError("OCR unavailable")
 
@@ -346,7 +356,7 @@ def test_orientation_report_is_saved_before_ocr_failure_and_visible_in_api(
         jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_status == ProcessingStatus.FAILED
         owner = session.get(User, receipt.receipt_user_id)
     monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: owner)
     response = client.get(f"/api/receipts/{receipt_id}")
@@ -370,7 +380,7 @@ def test_uncertain_orientation_continues_processing_and_duplicate_job_keeps_repo
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.orientation_report == report.model_dump(mode="json")
     assert calls == [True]
 
@@ -381,19 +391,20 @@ def test_reprocess_clears_orientation_and_stale_job_cannot_restore_it(receipt_id
     service.start_processing(receipt_id)
     assert service.advance_status(
         receipt_id,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
         orientation_report=report,
     )
     service.mark_failed(receipt_id)
     with SessionLocal() as session:
         owner_id = session.get(Receipt, receipt_id).receipt_user_id
     ticket = service.prepare_process(receipt_id, owner_id, replace_items=False)
-    service.start_processing(receipt_id, ticket.processing_version)
+    set_processing_status(receipt_id, ProcessingStatus.QUEUED)
+    assert service.start_processing(receipt_id, ticket.processing_version)
     assert not service.advance_status(
         receipt_id,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
         processing_version=1,
         orientation_report=report,
     )
@@ -401,8 +412,8 @@ def test_reprocess_clears_orientation_and_stale_job_cannot_restore_it(receipt_id
         assert session.get(Receipt, receipt_id).orientation_report is None
     assert service.advance_status(
         receipt_id,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
         processing_version=ticket.processing_version,
         orientation_report=report,
     )
@@ -413,21 +424,22 @@ def test_retry_clears_previous_attempt_orientation_report(receipt_id):
     service.start_processing(receipt_id)
     service.advance_status(
         receipt_id,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
         orientation_report=uncertain_orientation_report(),
     )
     service.mark_failed(receipt_id)
+    set_processing_status(receipt_id, ProcessingStatus.QUEUED)
     assert service.start_processing(receipt_id) is not None
     with SessionLocal() as session:
         assert session.get(Receipt, receipt_id).orientation_report is None
 
 
-def receipt_status(receipt_id: UUID) -> ReceiptStatus:
+def processing_status(receipt_id: UUID) -> ProcessingStatus:
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
         assert receipt is not None
-        return receipt.status
+        return receipt.processing_status
 
 
 def test_repeated_job_keeps_same_items(receipt_id, monkeypatch):
@@ -445,7 +457,7 @@ def test_repeated_job_keeps_same_items(receipt_id, monkeypatch):
     assert len(first_ids) == 2
     assert item_ids(receipt_id) == first_ids
     assert calls == [receipt_id]
-    assert receipt_status(receipt_id) == ReceiptStatus.NEED_REVIEW
+    assert processing_status(receipt_id) == ProcessingStatus.SUCCEEDED
 
 
 def test_parallel_jobs_save_only_once(receipt_id, monkeypatch):
@@ -469,17 +481,18 @@ def test_parallel_jobs_save_only_once(receipt_id, monkeypatch):
             second = executor.submit(jobs.process_receipt, str(receipt_id))
             second.result(timeout=5)
             assert calls == [receipt_id]
-            assert receipt_status(receipt_id) == ReceiptStatus.PREPROCESSING
+            assert processing_status(receipt_id) == ProcessingStatus.PREPROCESSING
         finally:
             release.set()
         first.result(timeout=10)
     assert len(item_ids(receipt_id)) == 2
-    assert receipt_status(receipt_id) == ReceiptStatus.NEED_REVIEW
+    assert processing_status(receipt_id) == ProcessingStatus.SUCCEEDED
 
 
 def test_failed_save_rolls_back_items_and_marker(
     receipt_id: UUID,
 ) -> None:
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
 
     invalid_result = ReceiptProcessingResult(
@@ -510,6 +523,7 @@ def test_failed_save_rolls_back_items_and_marker(
 def test_retry_preserves_manual_edit(
     receipt_id: UUID,
 ) -> None:
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
     service.save_result(receipt_id, make_result())
 
@@ -537,6 +551,7 @@ def test_retry_preserves_manual_edit(
 def test_retry_does_not_restore_manually_deleted_items(
     receipt_id: UUID,
 ) -> None:
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
     service.save_result(receipt_id, make_result())
 
@@ -562,6 +577,7 @@ def test_existing_manual_items_are_preserved(
         )
 
     original_ids = item_ids(receipt_id)
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
 
     with pytest.raises(ReceiptProcessingConflictError):
@@ -578,6 +594,7 @@ def test_existing_manual_items_are_preserved(
 def test_empty_result_is_also_saved_once(
     receipt_id: UUID,
 ) -> None:
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
     empty_result = ReceiptProcessingResult(items=())
 
@@ -603,29 +620,29 @@ def test_status_is_committed_before_each_step(receipt_id, monkeypatch):
     class ObservingPipeline(StubPipeline):
         def preprocess(self, source):
             assert isinstance(source.receipt_id, UUID)
-            observed.append(receipt_status(receipt_id))
+            observed.append(processing_status(receipt_id))
             return super().preprocess(source)
 
         def recognize(self, image):
             assert image == b"test-image"
-            observed.append(receipt_status(receipt_id))
+            observed.append(processing_status(receipt_id))
             return super().recognize(image)
 
         def parse(self, raw_text):
             assert raw_text == "Milk\nBread"
-            observed.append(receipt_status(receipt_id))
+            observed.append(processing_status(receipt_id))
             return ReceiptProcessingResult(items=make_result().items)
 
     monkeypatch.setattr(jobs, "get_receipt_pipeline", ObservingPipeline)
     jobs.process_receipt(str(receipt_id))
     assert observed == [
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
-        ReceiptStatus.PARSING,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
+        ProcessingStatus.PARSING,
     ]
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.raw_ocr_text == "Milk\nBread"
         assert receipt.processing_result_saved_at is not None
         assert len(receipt.items) == 2
@@ -634,23 +651,23 @@ def test_status_is_committed_before_each_step(receipt_id, monkeypatch):
 @pytest.mark.parametrize(
     ("step", "expected_status"),
     [
-        ("preprocess", ReceiptStatus.PREPROCESSING),
-        ("recognize", ReceiptStatus.OCR_PROCESSING),
-        ("parse", ReceiptStatus.PARSING),
+        ("preprocess", ProcessingStatus.PREPROCESSING),
+        ("recognize", ProcessingStatus.OCR_PROCESSING),
+        ("parse", ProcessingStatus.PARSING),
     ],
 )
 def test_pipeline_error_sets_failed(receipt_id, monkeypatch, step, expected_status):
     pipeline = StubPipeline()
 
     def fail(*args):
-        assert receipt_status(receipt_id) == expected_status
+        assert processing_status(receipt_id) == expected_status
         raise RuntimeError("Test pipeline failure")
 
     monkeypatch.setattr(pipeline, step, fail)
     monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
     with pytest.raises(RuntimeError, match="Test pipeline failure"):
         jobs.process_receipt(str(receipt_id))
-    assert receipt_status(receipt_id) == ReceiptStatus.FAILED
+    assert processing_status(receipt_id) == ProcessingStatus.FAILED
     assert item_ids(receipt_id) == set()
     with SessionLocal() as session:
         assert session.get(Receipt, receipt_id).processing_result_saved_at is None
@@ -664,25 +681,28 @@ def test_failed_receipt_can_be_started_again(receipt_id, monkeypatch):
     monkeypatch.setattr(jobs, "get_receipt_pipeline", FailingPipeline)
     with pytest.raises(RuntimeError, match="Temporary OCR failure"):
         jobs.process_receipt(str(receipt_id))
-    assert receipt_status(receipt_id) == ReceiptStatus.FAILED
+    assert processing_status(receipt_id) == ProcessingStatus.FAILED
     monkeypatch.setattr(jobs, "get_receipt_pipeline", StubPipeline)
+    set_processing_status(receipt_id, ProcessingStatus.QUEUED)
     jobs.process_receipt(str(receipt_id))
-    assert receipt_status(receipt_id) == ReceiptStatus.NEED_REVIEW
+    assert processing_status(receipt_id) == ProcessingStatus.SUCCEEDED
     assert len(item_ids(receipt_id)) == 2
 
 
-@pytest.mark.parametrize("status", [ReceiptStatus.NEED_REVIEW, ReceiptStatus.COMPLETED])
+@pytest.mark.parametrize(
+    "status", [ProcessingStatus.SUCCEEDED, ProcessingStatus.FAILED]
+)
 def test_finished_receipt_status_cannot_be_overwritten(receipt_id, status):
     service = ReceiptProcessingService(SessionLocal)
     service.save_result(receipt_id, make_result())
     with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = status
+        session.get(Receipt, receipt_id).processing_status = status
     assert service.start_processing(receipt_id) is None
     assert not service.advance_status(
-        receipt_id, ReceiptStatus.PREPROCESSING, ReceiptStatus.OCR_PROCESSING
+        receipt_id, ProcessingStatus.PREPROCESSING, ProcessingStatus.OCR_PROCESSING
     )
     assert not service.mark_failed(receipt_id)
-    assert receipt_status(receipt_id) == status
+    assert processing_status(receipt_id) == status
 
 
 def test_invalid_and_stale_transitions_do_not_change_status(receipt_id):
@@ -690,12 +710,12 @@ def test_invalid_and_stale_transitions_do_not_change_status(receipt_id):
     assert service.start_processing(receipt_id) is not None
     with pytest.raises(ValueError, match="Unsupported processing transition"):
         service.advance_status(
-            receipt_id, ReceiptStatus.PREPROCESSING, ReceiptStatus.PARSING
+            receipt_id, ProcessingStatus.PREPROCESSING, ProcessingStatus.PARSING
         )
     assert not service.advance_status(
-        receipt_id, ReceiptStatus.OCR_PROCESSING, ReceiptStatus.PARSING
+        receipt_id, ProcessingStatus.OCR_PROCESSING, ProcessingStatus.PARSING
     )
-    assert receipt_status(receipt_id) == ReceiptStatus.PREPROCESSING
+    assert processing_status(receipt_id) == ProcessingStatus.PREPROCESSING
 
 
 def test_deleted_during_preprocessing_stops_pipeline(receipt_id, monkeypatch):
@@ -728,7 +748,7 @@ def test_save_failure_sets_failed_without_partial_result(receipt_id, monkeypatch
     monkeypatch.setattr(jobs, "get_receipt_pipeline", InvalidResultPipeline)
     with pytest.raises(IntegrityError):
         jobs.process_receipt(str(receipt_id))
-    assert receipt_status(receipt_id) == ReceiptStatus.FAILED
+    assert processing_status(receipt_id) == ProcessingStatus.FAILED
     assert item_ids(receipt_id) == set()
     with SessionLocal() as session:
         assert session.get(Receipt, receipt_id).processing_result_saved_at is None
@@ -750,6 +770,7 @@ def test_failure_reporting_preserves_original_exception(receipt_id, monkeypatch)
 
 
 def test_parallel_result_saves_are_idempotent(receipt_id):
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     barrier = Barrier(2)
 
     def save():
@@ -795,7 +816,7 @@ def test_processing_error_does_not_store_exception_text(
     assert caught.value is original_error
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.FAILED
+        assert receipt.processing_status == ProcessingStatus.FAILED
         assert receipt.processing_error_code == expected_code
         assert receipt.processing_error_message
         for forbidden in ("secret-test-value", "database.private", "Traceback"):
@@ -820,7 +841,7 @@ def test_receipt_api_returns_only_safe_processing_error(
         assert response.status_code == 200
         body = response.json()
         receipt_body = body["items"][0] if url == "/api/receipts" else body
-        assert receipt_body["status"] == "failed"
+        assert receipt_body["processing_status"] == "failed"
         assert receipt_body["processing_error_code"] == expected.code
         assert receipt_body["processing_error_message"] == expected.message
         for forbidden in ("SECRET-DIAGNOSTIC", "Traceback", "internal SQL", "exc_info"):
@@ -832,10 +853,11 @@ def test_new_processing_attempt_clears_previous_error(receipt_id):
     service = ReceiptProcessingService(SessionLocal)
     assert service.start_processing(receipt_id) is not None
     assert service.mark_failed(receipt_id, RuntimeError("First failure"))
+    set_processing_status(receipt_id, ProcessingStatus.QUEUED)
     assert service.start_processing(receipt_id) is not None
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.PREPROCESSING
+        assert receipt.processing_status == ProcessingStatus.PREPROCESSING
         assert receipt.processing_error_code is None
         assert receipt.processing_error_message is None
 
@@ -844,21 +866,23 @@ def test_successful_save_clears_previous_error(receipt_id):
     service = ReceiptProcessingService(SessionLocal)
     assert service.start_processing(receipt_id) is not None
     assert service.mark_failed(receipt_id, RuntimeError("Earlier failure"))
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     assert service.save_result(receipt_id, make_result()) == SaveProcessingOutcome.SAVED
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.processing_error_code is None
         assert receipt.processing_error_message is None
 
 
 def test_late_error_does_not_overwrite_saved_result(receipt_id):
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
     service.save_result(receipt_id, make_result())
     assert not service.mark_failed(receipt_id, RuntimeError("Late failure"))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.processing_error_code is None
         assert receipt.processing_error_message is None
 
@@ -866,20 +890,22 @@ def test_late_error_does_not_overwrite_saved_result(receipt_id):
 def test_error_and_status_roll_back_together(receipt_id, monkeypatch):
     service = ReceiptProcessingService(SessionLocal)
     assert service.start_processing(receipt_id) is not None
-    original = ReceiptProcessingRepository.set_processing_error
+    from backend.app.services import receipt_processing_service
 
-    def fail_after_flush(self, *args, **kwargs):
-        original(self, *args, **kwargs)
+    original = receipt_processing_service.record_processing_failure
+
+    def fail_before_commit(*args, **kwargs):
+        original(*args, **kwargs)
         raise RuntimeError("Failure before commit")
 
     monkeypatch.setattr(
-        ReceiptProcessingRepository, "set_processing_error", fail_after_flush
+        receipt_processing_service, "record_processing_failure", fail_before_commit
     )
     with pytest.raises(RuntimeError, match="Failure before commit"):
         service.mark_failed(receipt_id, RuntimeError("OCR failure"))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.PREPROCESSING
+        assert receipt.processing_status == ProcessingStatus.PREPROCESSING
         assert receipt.processing_error_code is None
         assert receipt.processing_error_message is None
 

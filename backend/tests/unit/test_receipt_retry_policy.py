@@ -5,7 +5,6 @@ import httpx
 import pytest
 from botocore.exceptions import ClientError, EndpointConnectionError
 from pydantic import ValidationError
-from redis.exceptions import RedisError
 
 from backend.app.core.config import Settings, setting
 from backend.app.storage.exception import ObjectStorageError
@@ -91,54 +90,17 @@ def test_storage_error_classification(status, code, expected, wrapped):
 
 
 @pytest.mark.parametrize(
-    "remaining, error, eligible, expected",
-    [
-        (3, TimeoutError(), True, 3),
-        (3, TimeoutError(), False, 0),
-        (3, ValueError(), True, 0),
-        (0, TimeoutError(), True, 0),
-        (None, TimeoutError(), True, 0),
-    ],
+    "error, retryable", [(TimeoutError(), True), (ValueError(), False)]
 )
-def test_callback_retry_decision(monkeypatch, remaining, error, eligible, expected):
+def test_callback_passes_failure_to_receipt_service(monkeypatch, error, retryable):
     service = Mock()
-    service.can_retry_processing.return_value = eligible
     monkeypatch.setattr(
         retry_policy, "ReceiptProcessingService", Mock(return_value=service)
     )
     receipt_id = uuid4()
-    job = Mock(args=(str(receipt_id), 2), retries_left=remaining)
-    # RQ passes exactly these five positional arguments to a failure callback.
+    job = Mock(args=(str(receipt_id), 2))
     retry_policy.receipt_failure_callback(job, Mock(), type(error), error, None)
-    assert job.retries_left == expected
-    job.save.assert_called_once_with()
-    if remaining and isinstance(error, TimeoutError):
-        service.can_retry_processing.assert_called_once_with(
-            receipt_id=receipt_id,
-            processing_version=2,
-        )
-    else:
-        service.can_retry_processing.assert_not_called()
-    if not expected:
-        job.get_retry_interval.assert_not_called()
-
-
-def test_callback_disables_retry_when_database_check_fails(monkeypatch):
-    service = Mock()
-    service.can_retry_processing.side_effect = RuntimeError("DB unavailable")
-    monkeypatch.setattr(
-        retry_policy, "ReceiptProcessingService", Mock(return_value=service)
+    service.mark_failed.assert_called_once_with(
+        receipt_id, error, 2, retryable=retryable
     )
-    job = Mock(args=(str(uuid4()), 1), retries_left=3)
-    retry_policy.receipt_failure_callback(
-        job, Mock(), TimeoutError, TimeoutError(), None
-    )
-    assert job.retries_left == 0
-    job.get_retry_interval.assert_not_called()
-
-
-def test_callback_keeps_local_retry_disabled_if_redis_save_fails():
-    job = Mock(args=(str(uuid4()), 1), retries_left=3)
-    job.save.side_effect = RedisError("Redis unavailable")
-    retry_policy.receipt_failure_callback(job, Mock(), ValueError, ValueError(), None)
-    assert job.retries_left == 0
+    job.save.assert_not_called()

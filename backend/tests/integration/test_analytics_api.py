@@ -10,7 +10,7 @@ from backend.app.categorization.catalog import default_category_id
 from backend.app.db.session import SessionLocal, engine
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ReceiptReviewStatus
 
 pytestmark = pytest.mark.integration
 PATHS = ("summary", "categories", "products/top", "stores", "trends")
@@ -33,7 +33,7 @@ def receipt(
     amount,
     *,
     store="Магнит",
-    status=ReceiptStatus.COMPLETED,
+    receipt_status=ReceiptReviewStatus.CONFIRMED,
     confirmed=True,
     items=None,
 ):
@@ -43,7 +43,7 @@ def receipt(
         purchase_datetime=at,
         total_amount=Decimal(amount),
         store_name=store,
-        status=status,
+        receipt_status=receipt_status,
         confirmed_at=datetime(2026, 11, 10, tzinfo=UTC) if confirmed else None,
     )
     session.add(result)
@@ -116,7 +116,7 @@ def analytics_data(client, monkeypatch):
             owner,
             datetime(2026, 10, 5, tzinfo=UTC),
             "400",
-            status=ReceiptStatus.NEED_REVIEW,
+            receipt_status=ReceiptReviewStatus.NEEDS_REVIEW,
         )
         receipt(
             session, owner, datetime(2026, 10, 5, tzinfo=UTC), "500", confirmed=False
@@ -126,7 +126,7 @@ def analytics_data(client, monkeypatch):
             owner,
             datetime(2026, 10, 5, tzinfo=UTC),
             "600",
-            status=ReceiptStatus.FAILED,
+            receipt_status=ReceiptReviewStatus.DRAFT,
         )
         receipt(session, owner, None, "10000")
         receipt(session, other, datetime(2026, 10, 5, tzinfo=UTC), "9000")

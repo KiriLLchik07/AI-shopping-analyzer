@@ -9,9 +9,10 @@ from backend.app.core.exceptions import ReceiptProcessingConflictError
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Category, Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.services.receipt_processing_service import ReceiptProcessingService
+from backend.app.workers.receipt_dispatcher import advance_due_receipt
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +29,8 @@ def receipt_item(client, monkeypatch):
         receipt = Receipt(
             user=owner,
             image_object_key="review/items.jpg",
-            status=ReceiptStatus.NEED_REVIEW,
+            receipt_status=ReceiptReviewStatus.NEEDS_REVIEW,
+            processing_status=ProcessingStatus.SUCCEEDED,
             raw_ocr_text="Исходный OCR",
             total_amount=Decimal("100.00"),
         )
@@ -77,7 +79,7 @@ def test_add_item_persists_all_values_and_keeps_existing_position(receipt_item, 
         str(original_id),
         str(item_id),
     }
-    assert detail["status"] == "need_review"
+    assert detail["receipt_status"] == "needs_review"
     assert detail["raw_ocr_text"] == "Исходный OCR"
     assert detail["total_amount"] == "100.00"
     with SessionLocal() as session:
@@ -148,7 +150,7 @@ def test_delete_removes_only_target_and_repeated_delete_returns_404(
     assert client.delete(f"{url}/items/{item_id}").status_code == 404
     detail = client.get(url).json()
     assert [item["receipt_item_id"] for item in detail["items"]] == [str(remaining_id)]
-    assert detail["status"] == "need_review"
+    assert detail["receipt_status"] == "needs_review"
     assert detail["total_amount"] == "100.00"
     with SessionLocal() as session:
         assert session.get(ReceiptItem, item_id) is None
@@ -185,7 +187,13 @@ def test_membership_change_blocks_running_worker_result(
 ):
     receipt_id, item_id, owner_id = receipt_item
     service = ReceiptProcessingService(SessionLocal)
+    with SessionLocal.begin() as session:
+        receipt = session.get(Receipt, receipt_id)
+        receipt.receipt_status = ReceiptReviewStatus.DRAFT
+        receipt.processing_status = ProcessingStatus.FAILED
+
     ticket = service.prepare_process(receipt_id, owner_id, replace_items=True)
+    assert advance_due_receipt()
     assert service.start_processing(receipt_id, ticket.processing_version) is not None
     url = f"/api/receipts/{receipt_id}"
     if operation == "add":
@@ -198,6 +206,8 @@ def test_membership_change_blocks_running_worker_result(
     else:
         assert client.delete(f"{url}/items/{item_id}").status_code == 204
     before = client.get(url).json()["items"]
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).processing_status = ProcessingStatus.PARSING
     with pytest.raises(ReceiptProcessingConflictError):
         service.save_result(
             receipt_id, ReceiptProcessingResult(items=()), ticket.processing_version

@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -6,7 +7,6 @@ from fastapi.testclient import TestClient
 from redis.exceptions import RedisError
 from rq import SimpleWorker
 from rq.job import Job, JobStatus
-from rq.scheduler import RQScheduler
 from rq.timeouts import TimerDeathPenalty
 
 from backend.app.api.dependencies.auth import get_current_user
@@ -15,12 +15,19 @@ from backend.app.core.logging import LogContextFilter, get_correlation_id, log_c
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.schemas.request import ReceiptItemCreateRequest
 from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.workers import jobs
-from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
+from backend.app.workers.queue import (
+    dispatch_queue,
+    enqueue_receipt,
+    queue_connection,
+    receipt_job_id,
+    receipt_queue,
+)
+from backend.app.workers.receipt_dispatcher import advance_due_receipt
 
 pytestmark = pytest.mark.integration
 
@@ -37,7 +44,8 @@ def owner_client():
         receipt = Receipt(
             user=user,
             image_object_key="receipts/logging.jpg",
-            status=ReceiptStatus.FAILED,
+            processing_status=ProcessingStatus.FAILED,
+            ocr_due_at=None,
         )
         session.add(receipt)
         session.flush()
@@ -102,74 +110,58 @@ def test_http_queue_pipeline_and_callback_share_ids(
     assert response.headers["X-Correlation-ID"] == cid
     job_id = response.json()["job_id"]
     version = response.json()["processing_version"]
+    assert advance_due_receipt()
     job = Job.fetch(job_id, connection=queue_connection)
     assert job.meta["correlation_id"] == cid
     assert job.args == (str(receipt_id), version)
     assert job.kwargs == {}
     run_queue()
     if failure is TimeoutError:
-        assert job.get_status() == JobStatus.SCHEDULED
-        # Advance only this job's due date, then use the real RQ scheduler.
-        queue_connection.zadd(receipt_queue.scheduled_job_registry.key, {job_id: 0})
-        scheduler = RQScheduler([receipt_queue], connection=queue_connection)
-        scheduler.acquire_locks()
-        try:
-            scheduler.enqueue_scheduled_jobs()
-        finally:
-            scheduler.release_locks()
+        assert job.get_status() == JobStatus.FAILED
+        with SessionLocal.begin() as session:
+            receipt = session.get(Receipt, receipt_id)
+            assert receipt.processing_status == ProcessingStatus.RETRY_SCHEDULED
+            receipt.ocr_due_at = datetime.now(UTC)
+        assert advance_due_receipt()
+        next_job = Job.fetch(
+            receipt_job_id(receipt_id, version + 1), connection=queue_connection
+        )
+        assert next_job.meta["correlation_id"] == cid
         run_queue()
+        assert next_job.get_status() == JobStatus.FINISHED
         assert calls == [cid, cid]
     else:
         assert calls == [cid]
-    job.refresh()
-    assert job.meta["correlation_id"] == cid
-    assert job.get_status() == (
-        JobStatus.FAILED if failure is ValueError else JobStatus.FINISHED
-    )
+        assert job.get_status() == (
+            JobStatus.FAILED if failure is ValueError else JobStatus.FINISHED
+        )
     events = [
         entry
         for entry in logs.records
-        if entry.name.startswith("backend.app.workers") or entry.name == "test.pipeline"
+        if entry.name
+        in {"backend.app.workers.jobs", "backend.app.workers.queue", "test.pipeline"}
     ]
-    assert events
     for entry in events:
-        assert (
-            entry.correlation_id,
-            entry.job_id,
-            entry.receipt_id,
-            entry.processing_version,
-        ) == (cid, job_id, str(receipt_id), version)
+        assert entry.correlation_id == cid
+        assert entry.receipt_id == str(receipt_id)
+        assert entry.processing_version in {version, version + 1}
+        assert entry.job_id == receipt_job_id(receipt_id, entry.processing_version)
     messages = [entry.getMessage() for entry in events]
-    assert any("Receipt enqueued" in message for message in messages)
+    assert "Receipt enqueued" in messages
     assert "Pipeline internal event" in messages
-    if failure is not None:
+    if failure:
         assert "Receipt processing failed" in messages
-        expected = (
-            "Receipt retry permitted"
-            if failure is TimeoutError
-            else "Receipt retry disabled"
-        )
-        assert any(message.startswith(expected) for message in messages)
-    # A later manual reprocess gets a new chain and a new RQ job.
-    again = client.post(
-        f"/api/receipts/{receipt_id}/reprocess", json={"replace_items": True}
-    )
-    assert again.status_code == 202
-    assert again.headers["X-Correlation-ID"] != cid
-    assert again.json()["job_id"] != job_id
-    next_job = Job.fetch(again.json()["job_id"], connection=queue_connection)
-    assert next_job.meta["correlation_id"] == again.headers["X-Correlation-ID"]
 
 
 def test_enqueue_error_logs_generated_job_id_and_restores_context(monkeypatch, logs):
     def fail(*args, **kwargs):
         raise RedisError("unavailable")
 
-    monkeypatch.setattr(receipt_queue, "enqueue", fail)
+    monkeypatch.setattr(dispatch_queue, "enqueue", fail)
     cid, receipt_id = str(uuid4()), uuid4()
     with log_context(correlation_id=cid):
         with pytest.raises(RedisError):
-            enqueue_receipt(receipt_id, 4)
+            enqueue_receipt(receipt_id, 4, cid)
         assert get_correlation_id() == cid
         logging.getLogger("test.after_enqueue").info("After enqueue")
     entries = [
@@ -192,7 +184,7 @@ def test_sequential_jobs_do_not_share_context(logs):
     for _ in range(2):
         cid, receipt_id = str(uuid4()), uuid4()
         with log_context(correlation_id=cid):
-            job_id = enqueue_receipt(receipt_id)
+            job_id = enqueue_receipt(receipt_id, 1, cid)
         expected[job_id] = (cid, str(receipt_id))
     # Missing receipts exercise the early-return path in the same worker.
     run_queue()

@@ -8,7 +8,7 @@ from backend.app.api.dependencies.auth import get_current_user
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Category, Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 
 pytestmark = pytest.mark.integration
 
@@ -28,7 +28,8 @@ def review_receipt(client, monkeypatch):
             store_name="Старый магазин",
             purchase_datetime=datetime(2026, 10, 19, 6, tzinfo=UTC),
             total_amount=Decimal("100.00"),
-            status=ReceiptStatus.NEED_REVIEW,
+            receipt_status=ReceiptReviewStatus.NEEDS_REVIEW,
+            processing_status=ProcessingStatus.SUCCEEDED,
             raw_ocr_text="Исходный текст",
         )
         session.add(receipt)
@@ -57,7 +58,7 @@ def test_edit_receipt_metadata_persists_and_is_available_for_review(
             2026, 10, 20, 11, 46, 12, tzinfo=UTC
         )
         assert body["total_amount"] == "3240.15"
-        assert body["status"] == "need_review"
+        assert body["receipt_status"] == "needs_review"
         assert body["raw_ocr_text"] == "Исходный текст"
     with SessionLocal() as session:
         receipt = session.get(Receipt, review_receipt)
@@ -205,7 +206,7 @@ def test_edit_item_name_quantity_prices_and_category(review_item, client):
         assert body["unit_price"] == "125.50"
         assert body["total_price"] == "54.22"
         assert body["category_id"] == str(category_id)
-    assert detail["status"] == "need_review"
+    assert detail["receipt_status"] == "needs_review"
     assert detail["raw_ocr_text"] == "Исходный текст"
     with SessionLocal() as session:
         item = session.get(ReceiptItem, item_id)

@@ -1,34 +1,38 @@
 from datetime import UTC, datetime
+from io import BytesIO
+from unittest.mock import Mock
 from uuid import uuid4
 
 import pytest
-from rq import SimpleWorker
-from rq.executions import Execution
-from rq.job import Job, JobStatus
-from rq.registry import StartedJobRegistry
-from rq.scheduler import RQScheduler
-from rq.timeouts import TimerDeathPenalty
-from sqlalchemy import select
-from sqlalchemy.exc import OperationalError
+from PIL import Image
+from redis.exceptions import ConnectionError as RedisConnectionError
+from rq.job import Job
 
+from backend.app.api.dependencies.auth import get_current_user
 from backend.app.core.config import setting
-from backend.app.core.logging import log_context
 from backend.app.db.session import SessionLocal
-from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.main import app
+from backend.app.models import Receipt, User
+from backend.app.models.enums import ProcessingStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
-from backend.app.schemas.request import ReceiptItemCreateRequest
-from backend.app.services.receipt_pipeline import ReceiptPipeline
-from backend.app.services.receipt_processing_service import ReceiptProcessingService
-from backend.app.workers import jobs, retry_policy
-from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
+from backend.app.services.receipt_processing_service import (
+    ReceiptProcessingService,
+    SaveProcessingOutcome,
+)
+from backend.app.storage.factory import get_object_storage
+from backend.app.workers import receipt_dispatcher, retry_policy
+from backend.app.workers.queue import (
+    dispatch_queue,
+    enqueue_receipt,
+    queue_connection,
+    receipt_job_id,
+)
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def receipt_id(monkeypatch):
-    monkeypatch.setattr(setting, "receipt_retry_intervals_seconds", (10, 30, 90))
+def receipt_id():
     with SessionLocal.begin() as session:
         receipt = Receipt(
             user=User(
@@ -44,226 +48,130 @@ def receipt_id(monkeypatch):
         return receipt.receipt_id
 
 
-def started_job(receipt_id, remaining=3):
-    cid = str(uuid4())
-    with log_context(correlation_id=cid):
-        job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
-    receipt_queue.remove(job.id)
-    job.retries_left = remaining
-    job.set_status(JobStatus.STARTED)
-    job.save()
-    with queue_connection.pipeline() as pipe:
-        execution = Execution.create(
-            job, ttl=300, pipeline=pipe, worker_name="dead-worker"
-        )
-        pipe.execute()
-    registry = StartedJobRegistry(receipt_queue.name, connection=queue_connection)
-    registry.death_penalty_class = TimerDeathPenalty
-    return job, execution, registry
-
-
-def expire(execution, registry):
-    # Change only the test execution's heartbeat deadline; no wall-clock sleeps.
-    queue_connection.zadd(registry.key, {execution.composite_key: 0})
-
-
-def set_state(receipt_id, state):
+def make_due(receipt_id):
     with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = state
+        session.get(Receipt, receipt_id).ocr_due_at = datetime.now(UTC)
+
+
+def read_attempt(receipt_id):
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        return (
+            receipt.processing_status,
+            receipt.processing_version,
+            receipt.automatic_ocr_retries,
+        )
+
+
+def test_redis_outage_preserves_dispatch_request(receipt_id, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RedisConnectionError("redis unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(receipt_dispatcher, "enqueue_receipt", fail)
+        assert receipt_dispatcher.advance_due_receipt()
+        assert not receipt_dispatcher.advance_due_receipt()
+
+    assert read_attempt(receipt_id) == (ProcessingStatus.PENDING_DISPATCH, 1, 0)
+    make_due(receipt_id)
+    assert receipt_dispatcher.advance_due_receipt()
+    assert read_attempt(receipt_id) == (ProcessingStatus.QUEUED, 1, 0)
+    assert dispatch_queue.job_ids == [receipt_job_id(receipt_id, 1)]
+
+
+def test_upload_stays_durable_when_dispatch_cannot_reach_redis(client, monkeypatch):
+    with SessionLocal.begin() as session:
+        owner = User(
+            user_name="Upload",
+            user_surname="Recovery",
+            user_mail=f"{uuid4()}@example.com",
+            user_password_hash="test-hash",
+        )
+        session.add(owner)
+    monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: owner)
+    storage = Mock()
+    monkeypatch.setitem(app.dependency_overrides, get_object_storage, lambda: storage)
+
+    def offline(*args, **kwargs):
+        raise RedisConnectionError("dispatch unavailable")
+
+    image = BytesIO()
+    Image.new("RGB", (128, 128)).save(image, "PNG")
+    with monkeypatch.context() as patch:
+        patch.setattr(receipt_dispatcher, "enqueue_receipt", offline)
+        response = client.post(
+            "/api/receipts/upload",
+            files={"file": ("receipt.png", image.getvalue(), "image/png")},
+        )
+        assert response.status_code == 201, response.text
+        receipt_id = response.json()["receipt_id"]
+        assert response.json()["processing_status"] == "pending_dispatch"
+        assert receipt_dispatcher.advance_due_receipt()
+        assert (
+            client.get(f"/api/receipts/{receipt_id}").json()["processing_status"]
+            == "pending_dispatch"
+        )
+    storage.upload.assert_called_once()
+
+
+def test_unconfirmed_enqueue_is_deduplicated(receipt_id):
+    job_id = enqueue_receipt(receipt_id, 1, None)
+    assert receipt_dispatcher.advance_due_receipt()
+    assert dispatch_queue.job_ids == [job_id]
+    assert read_attempt(receipt_id) == (ProcessingStatus.QUEUED, 1, 0)
+
+
+def test_worker_can_claim_job_when_redis_delivery_was_not_recorded(receipt_id):
+    enqueue_receipt(receipt_id, 1, None)
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id, 1)
+    assert not service.start_processing(receipt_id, 1)
+    assert not receipt_dispatcher.advance_due_receipt()
+    assert read_attempt(receipt_id) == (ProcessingStatus.PREPROCESSING, 1, 0)
+
+
+def test_missing_queued_job_is_sent_again(receipt_id):
+    assert receipt_dispatcher.advance_due_receipt()
+    job_id = receipt_job_id(receipt_id, 1)
+    dispatch_queue.remove(job_id)
+    Job.fetch(job_id, connection=queue_connection).delete()
+
+    make_due(receipt_id)
+    assert receipt_dispatcher.advance_due_receipt()
+    assert read_attempt(receipt_id) == (ProcessingStatus.PENDING_DISPATCH, 1, 0)
+    assert receipt_dispatcher.advance_due_receipt()
+    assert dispatch_queue.job_ids == [job_id]
+
+
+def test_stalled_worker_is_recovered_and_late_write_is_ignored(receipt_id):
+    assert receipt_dispatcher.advance_due_receipt()
+    service = ReceiptProcessingService(SessionLocal)
+    assert service.start_processing(receipt_id, 1)
+    assert not receipt_dispatcher.advance_due_receipt()
+
+    make_due(receipt_id)
+    assert receipt_dispatcher.advance_due_receipt()
+    assert read_attempt(receipt_id) == (ProcessingStatus.RETRY_SCHEDULED, 2, 1)
+    assert (
+        service.save_result(receipt_id, ReceiptProcessingResult(items=()), 1)
+        == SaveProcessingOutcome.STALE_JOB
+    )
 
 
 @pytest.mark.parametrize(
-    "state",
+    "delays, expected",
     [
-        ReceiptStatus.UPLOADED,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
-        ReceiptStatus.PARSING,
+        ((10,), ProcessingStatus.RETRY_SCHEDULED),
+        ((), ProcessingStatus.FAILED),
     ],
 )
-def test_abandoned_job_restores_status_and_schedules_retry(receipt_id, state):
-    set_state(receipt_id, state)
-    job, execution, registry = started_job(receipt_id)
-    cid = job.meta["correlation_id"]
-    expire(execution, registry)
-    before = datetime.now(UTC).timestamp()
-    registry.cleanup()
-    job.refresh()
-    assert job.get_status() == JobStatus.SCHEDULED
-    assert job.retries_left == 2
-    assert job.meta["correlation_id"] == cid
-    assert job.args == (str(receipt_id), 1)
-    due = receipt_queue.scheduled_job_registry.get_scheduled_time(job).timestamp()
-    assert before + 9 <= due <= datetime.now(UTC).timestamp() + 11
-    with SessionLocal() as session:
-        receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.FAILED
-        assert receipt.processing_error_code == "processing_interrupted"
-        assert receipt.processing_error_message
-    # Cleanup is idempotent and does not consume another retry.
-    registry.cleanup()
-    job.refresh()
-    assert job.retries_left == 2
-
-
-def test_unexpired_execution_is_not_recovered(receipt_id):
-    set_state(receipt_id, ReceiptStatus.OCR_PROCESSING)
-    job, execution, registry = started_job(receipt_id)
-    registry.cleanup()
-    job.refresh()
-    assert job.get_status() == JobStatus.STARTED
-    assert job.retries_left == 3
-    assert queue_connection.zscore(registry.key, execution.composite_key) is not None
-    with SessionLocal() as session:
-        assert session.get(Receipt, receipt_id).status == ReceiptStatus.OCR_PROCESSING
-
-
-def test_exhausted_job_becomes_failed_and_can_be_reprocessed(receipt_id):
-    set_state(receipt_id, ReceiptStatus.PARSING)
-    job, execution, registry = started_job(receipt_id, remaining=0)
-    expire(execution, registry)
-    registry.cleanup()
-    job.refresh()
-    assert job.get_status() == JobStatus.FAILED
-    assert job.retries_left == 0
-    assert receipt_queue.scheduled_job_registry.count == 0
-    with SessionLocal() as session:
-        receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.FAILED
-        assert receipt.processing_error_code == "processing_interrupted"
-        owner = receipt.receipt_user_id
-    ticket = ReceiptProcessingService(SessionLocal).prepare_process(
-        receipt_id, owner, False
-    )
-    assert ticket.processing_version == 2
-
-
-@pytest.mark.parametrize("change", ["deleted", "new_version", "saved"])
-def test_recovery_does_not_modify_obsolete_or_saved_receipt(receipt_id, change):
-    set_state(receipt_id, ReceiptStatus.PARSING)
-    job, execution, registry = started_job(receipt_id)
-    with SessionLocal.begin() as session:
-        receipt = session.get(Receipt, receipt_id)
-        if change == "deleted":
-            session.delete(receipt)
-        elif change == "new_version":
-            receipt.processing_version = 2
-            receipt.status = ReceiptStatus.OCR_PROCESSING
-        else:
-            receipt.processing_result_saved_at = datetime.now(UTC)
-            receipt.status = ReceiptStatus.NEED_REVIEW
-            session.add(
-                ReceiptItem(receipt_id=receipt_id, raw_name="Saved", quantity=1)
-            )
-    expire(execution, registry)
-    registry.cleanup()
-    job.refresh()
-    assert job.retries_left == 0
-    assert receipt_queue.scheduled_job_registry.count == 0
-    with SessionLocal() as session:
-        receipt = session.get(Receipt, receipt_id)
-        if change == "deleted":
-            assert receipt is None
-        else:
-            assert receipt.processing_error_code is None
-            if change == "new_version":
-                assert receipt.processing_version == 2
-                assert receipt.status == ReceiptStatus.OCR_PROCESSING
-            else:
-                assert receipt.status == ReceiptStatus.NEED_REVIEW
-                assert (
-                    session.scalars(
-                        select(ReceiptItem).where(ReceiptItem.receipt_id == receipt_id)
-                    )
-                    .one()
-                    .raw_name
-                    == "Saved"
-                )
-
-
-def test_database_failure_keeps_abandoned_execution_recoverable(
-    receipt_id, monkeypatch
+def test_worker_failure_callback_respects_retry_budget(
+    receipt_id, monkeypatch, delays, expected
 ):
-    set_state(receipt_id, ReceiptStatus.OCR_PROCESSING)
-    job, execution, registry = started_job(receipt_id)
-    expire(execution, registry)
-
-    def unavailable(*args, **kwargs):
-        raise OperationalError("test", {}, RuntimeError("DB unavailable"))
-
-    with monkeypatch.context() as patch:
-        patch.setattr(ReceiptProcessingService, "mark_interrupted", unavailable)
-        with pytest.raises(OperationalError):
-            registry.cleanup()
-    job.refresh()
-    assert job.retries_left == 3
-    assert job.get_status() == JobStatus.STARTED
-    assert queue_connection.zscore(registry.key, execution.composite_key) is not None
-    registry.cleanup()
-    assert job.get_status() == JobStatus.SCHEDULED
-
-
-@pytest.mark.parametrize("remaining", [0, 3])
-def test_work_horse_death_uses_same_policy(receipt_id, remaining):
-    set_state(receipt_id, ReceiptStatus.OCR_PROCESSING)
-    job, _, _ = started_job(receipt_id, remaining=remaining)
-    worker = SimpleWorker(
-        [receipt_queue],
-        connection=queue_connection,
-        work_horse_killed_handler=retry_policy.receipt_work_horse_killed_handler,
-    )
-    worker.handle_work_horse_killed(job, 123, 9, None)
-    assert job.retries_left == remaining
-    # RQ, not our hook, owns rescheduling and decrementing the retry count.
-    assert receipt_queue.scheduled_job_registry.count == 0
-    worker.handle_job_failure(job, receipt_queue, exc_string="test work horse killed")
-    job.refresh()
-    assert job.get_status() == (JobStatus.SCHEDULED if remaining else JobStatus.FAILED)
-    assert job.retries_left == max(remaining - 1, 0)
-    with SessionLocal() as session:
-        assert session.get(Receipt, receipt_id).status == ReceiptStatus.FAILED
-
-
-def test_recovered_job_finishes_without_duplicate_items(receipt_id, monkeypatch):
-    set_state(receipt_id, ReceiptStatus.PARSING)
-    job, execution, registry = started_job(receipt_id)
-    expire(execution, registry)
-    registry.cleanup()
-
-    class Pipeline(ReceiptPipeline):
-        def preprocess(self, source):
-            return b"image"
-
-        def recognize(self, image):
-            return "Milk"
-
-        def parse(self, raw_text):
-            return ReceiptProcessingResult(
-                items=(ReceiptItemCreateRequest(raw_name="Milk", quantity=1),)
-            )
-
-    monkeypatch.setattr(jobs, "get_receipt_pipeline", Pipeline)
-    queue_connection.zadd(receipt_queue.scheduled_job_registry.key, {job.id: 0})
-    scheduler = RQScheduler([receipt_queue], connection=queue_connection)
-    scheduler.acquire_locks()
-    try:
-        scheduler.enqueue_scheduled_jobs()
-    finally:
-        scheduler.release_locks()
-    worker = SimpleWorker([receipt_queue], connection=queue_connection)
-    worker.death_penalty_class = TimerDeathPenalty
-    worker.work(burst=True, with_scheduler=False, logging_level="CRITICAL")
-    assert job.get_status() == JobStatus.FINISHED
-    jobs.process_receipt(str(receipt_id))
-    with SessionLocal() as session:
-        receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
-        assert receipt.processing_error_code is None
-        assert (
-            len(
-                session.scalars(
-                    select(ReceiptItem).where(ReceiptItem.receipt_id == receipt_id)
-                ).all()
-            )
-            == 1
-        )
+    monkeypatch.setattr(setting, "receipt_retry_intervals_seconds", delays)
+    assert receipt_dispatcher.advance_due_receipt()
+    assert ReceiptProcessingService(SessionLocal).start_processing(receipt_id, 1)
+    job = Job.fetch(receipt_job_id(receipt_id, 1), connection=queue_connection)
+    retry_policy.receipt_work_horse_killed_handler(job, 123, 1, None)
+    retry_policy.receipt_work_horse_killed_handler(job, 123, 1, None)
+    assert read_attempt(receipt_id) == (expected, 1 + bool(delays), int(bool(delays)))

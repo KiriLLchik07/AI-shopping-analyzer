@@ -11,7 +11,7 @@ from backend.app.core.config import AnalyticsSettings
 from backend.app.db.session import SessionLocal, engine
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ReceiptReviewStatus
 from backend.app.services.analytics_period_service import (
     resolve_month_comparison_periods,
 )
@@ -32,14 +32,20 @@ def new_user():
 
 
 def add_receipt(
-    session, owner, at, amount, *, status=ReceiptStatus.COMPLETED, confirmed=True
+    session,
+    owner,
+    at,
+    amount,
+    *,
+    receipt_status=ReceiptReviewStatus.CONFIRMED,
+    confirmed=True,
 ):
     result = Receipt(
         user=owner,
         image_object_key=f"comparison/{uuid4()}.jpg",
         purchase_datetime=at,
         total_amount=Decimal(amount),
-        status=status,
+        receipt_status=receipt_status,
         confirmed_at=NOW if confirmed else None,
     )
     result.items = [
@@ -98,14 +104,14 @@ def comparison_data(client, monkeypatch):
                 owner,
                 datetime(2026, month, 8, tzinfo=UTC),
                 "7000",
-                status=ReceiptStatus.NEED_REVIEW,
+                receipt_status=ReceiptReviewStatus.NEEDS_REVIEW,
             )
             add_receipt(
                 session,
                 owner,
                 datetime(2026, month, 8, tzinfo=UTC),
                 "8000",
-                status=ReceiptStatus.FAILED,
+                receipt_status=ReceiptReviewStatus.DRAFT,
             )
         add_receipt(session, owner, None, "9000")
         session.flush()

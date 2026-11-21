@@ -24,7 +24,7 @@ from backend.app.llm.interface import LlmProvider
 from backend.app.llm.ollama_provider import OllamaLlmProvider
 from backend.app.main import app
 from backend.app.models import Category, LlmReport, Receipt, ReceiptItem, User, UserRule
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ReceiptReviewStatus
 from backend.app.repositories.llm_report_repository import LlmReportRepository
 from backend.app.schemas.llm_report import MonthlyReportResult
 from backend.app.services.llm_report_data_service import LlmReportDataService
@@ -109,7 +109,7 @@ def owner(client):
             store_name="PRIVATE-ADDRESS",
             purchase_datetime=datetime(2026, 9, 15, tzinfo=UTC),
             total_amount=Decimal("500.00"),
-            status=ReceiptStatus.COMPLETED,
+            receipt_status=ReceiptReviewStatus.CONFIRMED,
             confirmed_at=datetime(2026, 9, 16, tzinfo=UTC),
         )
         current.items = [
@@ -128,7 +128,7 @@ def owner(client):
                     image_object_key="previous",
                     purchase_datetime=datetime(2026, 8, 15, tzinfo=UTC),
                     total_amount=200,
-                    status=ReceiptStatus.COMPLETED,
+                    receipt_status=ReceiptReviewStatus.CONFIRMED,
                     confirmed_at=datetime(2026, 8, 16, tzinfo=UTC),
                 ),
                 Receipt(
@@ -136,14 +136,14 @@ def owner(client):
                     image_object_key="unconfirmed",
                     purchase_datetime=datetime(2026, 9, 15, tzinfo=UTC),
                     total_amount=800,
-                    status=ReceiptStatus.COMPLETED,
+                    receipt_status=ReceiptReviewStatus.CONFIRMED,
                 ),
                 Receipt(
                     user=user,
                     image_object_key="needs-review",
                     purchase_datetime=datetime(2026, 9, 15, tzinfo=UTC),
                     total_amount=750,
-                    status=ReceiptStatus.NEED_REVIEW,
+                    receipt_status=ReceiptReviewStatus.NEEDS_REVIEW,
                     confirmed_at=datetime(2026, 9, 16, tzinfo=UTC),
                 ),
                 Receipt(
@@ -151,7 +151,7 @@ def owner(client):
                     image_object_key="foreign",
                     purchase_datetime=datetime(2026, 9, 15, tzinfo=UTC),
                     total_amount=900,
-                    status=ReceiptStatus.COMPLETED,
+                    receipt_status=ReceiptReviewStatus.CONFIRMED,
                     confirmed_at=datetime(2026, 9, 16, tzinfo=UTC),
                 ),
                 UserRule(user=user, rule_text="Планировать покупки заранее"),
@@ -369,7 +369,9 @@ def test_concurrent_edit_keeps_original_input_snapshot(owner, provider, client):
             session.execute(
                 update(Receipt)
                 .where(Receipt.receipt_id == receipt_id)
-                .values(confirmed_at=None, status=ReceiptStatus.NEED_REVIEW)
+                .values(
+                    confirmed_at=None, receipt_status=ReceiptReviewStatus.NEEDS_REVIEW
+                )
             )
 
     provider.callback = edit_receipt
