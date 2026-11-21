@@ -6,7 +6,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.app.models import Receipt, ReceiptItem
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.items import ReceiptItemData
 from backend.app.schemas.ocr import OcrResult
 from backend.app.schemas.orientation import OrientationReport
@@ -45,14 +45,14 @@ class ReceiptProcessingRepository:
     def set_status(
         self,
         receipt: Receipt,
-        status: ReceiptStatus,
+        status: ProcessingStatus,
         clear_error: bool = False,
         orientation_report: OrientationReport | None = None,
         clear_orientation_report: bool = False,
         clear_ocr_result: bool = False,
     ) -> None:
 
-        receipt.status = status
+        receipt.processing_status = status
         if clear_ocr_result:
             receipt.raw_ocr_text = None
             receipt.ocr_confidence = None
@@ -64,20 +64,6 @@ class ReceiptProcessingRepository:
         if clear_error:
             receipt.processing_error_code = None
             receipt.processing_error_message = None
-
-        self.session.flush()
-
-    def set_processing_error(
-        self,
-        receipt: Receipt,
-        status: ReceiptStatus,
-        error_code: str,
-        error_message: str,
-    ) -> None:
-
-        receipt.status = status
-        receipt.processing_error_code = error_code
-        receipt.processing_error_message = error_message
 
         self.session.flush()
 
@@ -94,14 +80,14 @@ class ReceiptProcessingRepository:
         receipt.parsing_report = None
         receipt.processing_error_code = None
         receipt.processing_error_message = None
-        receipt.status = ReceiptStatus.UPLOADED
+        receipt.processing_status = ProcessingStatus.PENDING_DISPATCH
 
         self.session.flush()
 
     def store_ocr_result(self, receipt: Receipt, result: OcrResult) -> None:
         receipt.raw_ocr_text = result.raw_text
         receipt.ocr_confidence = result.confidence
-        receipt.status = ReceiptStatus.PARSING
+        receipt.processing_status = ProcessingStatus.PARSING
         self.session.flush()
 
     def store_result(
@@ -110,7 +96,6 @@ class ReceiptProcessingRepository:
         items: Sequence[ReceiptItemData],
         raw_ocr_text: str | None,
         saved_at: datetime,
-        status: ReceiptStatus,
         parsed_receipt: ReceiptParsingResult | None = None,
     ) -> None:
 
@@ -146,7 +131,9 @@ class ReceiptProcessingRepository:
                 receipt.purchase_datetime = purchased_at
         receipt.processing_result_saved_at = saved_at
         receipt.confirmed_at = None
-        receipt.status = status
+        receipt.receipt_status = ReceiptReviewStatus.NEEDS_REVIEW
+        receipt.processing_status = ProcessingStatus.SUCCEEDED
+        receipt.ocr_due_at = None
 
         receipt.processing_error_code = None
         receipt.processing_error_message = None
