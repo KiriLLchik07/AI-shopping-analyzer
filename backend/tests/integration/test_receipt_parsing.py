@@ -11,7 +11,7 @@ from backend.app.api.dependencies.auth import get_current_user
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.app.schemas.ocr import OcrFragment, OcrResult
 from backend.app.schemas.processing import ReceiptProcessingResult
@@ -23,6 +23,7 @@ from backend.app.services.receipt_processing_service import (
 )
 from backend.app.services.receipt_service import ReceiptService
 from backend.app.workers import jobs
+from backend.app.workers.receipt_dispatcher import advance_due_receipt
 
 pytestmark = pytest.mark.integration
 TEXT = 'ООО "Тестовый магазин"\n20.10.2026 17:46\nИТОГ 3 240,00 ₽'
@@ -37,7 +38,11 @@ def receipt_owner():
             user_mail=f"{uuid4()}@example.com",
             user_password_hash="test-hash",
         )
-        receipt = Receipt(user=user, image_object_key="parsing/test.jpg")
+        receipt = Receipt(
+            user=user,
+            image_object_key="parsing/test.jpg",
+            processing_status=ProcessingStatus.QUEUED,
+        )
         session.add(receipt)
         session.flush()
         return receipt.receipt_id, user
@@ -68,7 +73,7 @@ def test_worker_parses_metadata_persists_report_and_exposes_api(
         assert receipt.purchase_datetime == datetime(2026, 10, 20, 11, 46, tzinfo=UTC)
         assert receipt.raw_ocr_text == TEXT
         assert receipt.ocr_confidence == 0.9
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.items == []
         assert receipt.parsing_report["warnings"] == ["Товарные строки не найдены."]
         assert "raw_ocr_text" not in receipt.parsing_report
@@ -101,7 +106,7 @@ def test_unknown_timezone_preserves_local_time_in_report_without_db_assumption(
             "PARSING_TIMEZONE" in warning
             for warning in receipt.parsing_report["warnings"]
         )
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
     monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
     response = client.get(f"/api/receipts/{receipt_id}")
     assert response.status_code == 200
@@ -123,7 +128,7 @@ def test_missing_metadata_goes_to_review_instead_of_failed(receipt_owner, monkey
             is None
         )
         assert len(receipt.parsing_report["warnings"]) == 4
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.processing_error_code is None
 
 
@@ -145,6 +150,11 @@ def test_parser_does_not_overwrite_existing_metadata(receipt_owner, monkeypatch)
         assert receipt.parsing_report["total_amount"] == "3240.00"
 
 
+def set_processing_status(receipt_id, status):
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).processing_status = status
+
+
 @pytest.mark.parametrize("field", ["store_name", "purchase_datetime", "total_amount"])
 @pytest.mark.parametrize("clear", [False, True])
 @pytest.mark.parametrize("timing", ["before_reprocess", "during_processing"])
@@ -154,7 +164,7 @@ def test_reprocess_preserves_explicit_manual_metadata(
     receipt_id, user = receipt_owner
     monkeypatch.setitem(app.dependency_overrides, get_current_user, lambda: user)
     service = ReceiptProcessingService(SessionLocal)
-    service.save_result(receipt_id, pipeline().parse(TEXT))
+    set_processing_status(receipt_id, ProcessingStatus.FAILED)
     values = {
         "store_name": "Исправленный магазин",
         "purchase_datetime": "2026-10-19T12:00:00Z",
@@ -169,6 +179,7 @@ def test_reprocess_preserves_explicit_manual_metadata(
 
     expected = edit() if timing == "before_reprocess" else None
     ticket = service.prepare_process(receipt_id, user.user_id, replace_items=True)
+    assert advance_due_receipt()
     worker_pipeline = pipeline()
     original_parse = worker_pipeline.parse
 
@@ -184,19 +195,12 @@ def test_reprocess_preserves_explicit_manual_metadata(
     response = client.get(f"/api/receipts/{receipt_id}")
     assert response.status_code == 200
     assert response.json()[field] == expected
-    assert response.json()["status"] == "need_review"
+    assert response.json()["receipt_status"] == "needs_review"
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
         assert receipt.manually_updated_fields == [field]
         assert receipt.parsing_report[field] is not None
         assert receipt.processing_result_saved_at is not None
-
-    next_ticket = service.prepare_process(receipt_id, user.user_id, replace_items=True)
-    monkeypatch.setattr(worker_pipeline, "parse", original_parse)
-    jobs.process_receipt(
-        str(receipt_id), processing_version=next_ticket.processing_version
-    )
-    assert client.get(f"/api/receipts/{receipt_id}").json()[field] == expected
 
 
 def test_only_explicitly_edited_fields_are_protected_and_marks_accumulate(
@@ -242,6 +246,7 @@ def test_manual_update_refreshes_preloaded_receipt_and_keeps_other_field_marks(
 
 def test_stale_and_duplicate_results_cannot_replace_metadata(receipt_owner):
     receipt_id, _ = receipt_owner
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     service = ReceiptProcessingService(SessionLocal)
     result = pipeline().parse(TEXT)
     assert (
@@ -264,6 +269,7 @@ def test_stale_and_duplicate_results_cannot_replace_metadata(receipt_owner):
 
 def test_metadata_report_items_and_saved_marker_roll_back_together(receipt_owner):
     receipt_id, _ = receipt_owner
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     result = ReceiptProcessingResult(
         raw_ocr_text=TEXT,
         parsed_receipt=ReceiptParser("Asia/Omsk").parse(TEXT),
@@ -288,7 +294,12 @@ def test_metadata_report_items_and_saved_marker_roll_back_together(receipt_owner
 def test_reprocess_clears_report_and_ignores_old_job(receipt_owner):
     receipt_id, user = receipt_owner
     service = ReceiptProcessingService(SessionLocal)
-    service.save_result(receipt_id, pipeline().parse(TEXT))
+    with SessionLocal.begin() as session:
+        receipt = session.get(Receipt, receipt_id)
+        receipt.processing_status = ProcessingStatus.FAILED
+        receipt.parsing_report = (
+            pipeline().parse(TEXT).parsed_receipt.model_dump(mode="json")
+        )
     ticket = service.prepare_process(receipt_id, user.user_id, replace_items=False)
     with SessionLocal() as session:
         assert session.get(Receipt, receipt_id).parsing_report is None
@@ -296,7 +307,9 @@ def test_reprocess_clears_report_and_ignores_old_job(receipt_owner):
         service.save_result(receipt_id, pipeline().parse(TEXT))
         == SaveProcessingOutcome.STALE_JOB
     )
+    assert advance_due_receipt()
     assert service.start_processing(receipt_id, ticket.processing_version) is not None
+    set_processing_status(receipt_id, ProcessingStatus.PARSING)
     assert (
         service.save_result(
             receipt_id, pipeline().parse(TEXT), ticket.processing_version
@@ -318,7 +331,7 @@ def test_worker_saves_fixture_items_and_duplicate_job_is_idempotent(
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert len(receipt.items) == count
         original_ids = {item.receipt_item_id for item in receipt.items}
         assert all(
@@ -363,7 +376,7 @@ def test_partial_item_is_persisted_without_fake_quantity(
         item = receipt.items[0]
         assert item.quantity is item.unit_price is None
         assert item.total_price == Decimal("90.00")
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert any(
             "количество" in warning for warning in receipt.parsing_report["warnings"]
         )
@@ -428,7 +441,7 @@ def test_actual_ocr_fragments_can_be_processed_and_saved(
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.processing_error_code is None
         assert len(receipt.items) == count
         assert receipt.raw_ocr_text == text
@@ -459,7 +472,7 @@ def test_currency_and_date_formats_are_saved_and_exposed_in_api(
         )
         assert receipt.total_amount == Decimal("201.00")
         assert receipt.raw_ocr_text == raw
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.items[0].raw_name == "Товар"
         assert receipt.items[0].quantity == 2
         assert receipt.items[0].unit_price == Decimal("100.50")
@@ -492,7 +505,7 @@ def test_totals_check_is_saved_and_available_in_api_without_failing_job(
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.processing_error_code is None
         assert receipt.processing_result_saved_at is not None
         assert receipt.raw_ocr_text == raw
@@ -559,7 +572,7 @@ def test_worker_persists_normalized_units_and_api_preserves_values(
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.raw_ocr_text == raw
         item = receipt.items[0]
         assert item.raw_name == "Молоко 900 мл"
@@ -601,7 +614,7 @@ def test_worker_saves_raw_and_normalized_names_and_api_returns_both(
     jobs.process_receipt(str(receipt_id))
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.raw_ocr_text == raw
         assert len(receipt.items) == 1
         assert receipt.items[0].raw_name == raw_name
@@ -615,11 +628,9 @@ def test_worker_saves_raw_and_normalized_names_and_api_returns_both(
     assert item["normalized_name"] == normalized_name
 
 
-def test_manual_normalized_name_survives_duplicate_job_and_requires_replacement_consent(
+def test_manual_normalized_name_survives_duplicate_job_and_rejected_reprocess(
     receipt_owner, client, monkeypatch
 ):
-    from backend.app.api import receipts as receipts_api
-
     receipt_id, user = receipt_owner
     monkeypatch.setattr(
         jobs,
@@ -637,22 +648,16 @@ def test_manual_normalized_name_survives_duplicate_job_and_requires_replacement_
     assert response.status_code == 200
     assert response.json()["raw_name"] == "МОЛОКО"
     jobs.process_receipt(str(receipt_id))
-    monkeypatch.setattr(
-        receipts_api, "enqueue_receipt", lambda *args, **kwargs: "names-test-job"
-    )
     assert client.post(f"/api/receipts/{receipt_id}/reprocess").status_code == 409
     item = client.get(f"/api/receipts/{receipt_id}").json()["items"][0]
     assert item["normalized_name"] == "Молоко фермерское"
     assert item["raw_name"] == "МОЛОКО"
-    response = client.post(
-        f"/api/receipts/{receipt_id}/reprocess", json={"replace_items": True}
+    assert (
+        client.post(
+            f"/api/receipts/{receipt_id}/reprocess", json={"replace_items": True}
+        ).status_code
+        == 409
     )
-    assert response.status_code == 202
-    jobs.process_receipt(str(receipt_id), response.json()["processing_version"])
-    items = client.get(f"/api/receipts/{receipt_id}").json()["items"]
-    assert len(items) == 1
-    assert items[0]["raw_name"] == "МОЛОКО"
-    assert items[0]["normalized_name"] == "молоко"
 
 
 def confidence_pipeline(parts):
@@ -686,7 +691,7 @@ def test_worker_stores_distinct_item_confidences_and_exposes_them_in_api(
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
         assert receipt.ocr_confidence == 0.99
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert sorted(item.confidence for item in receipt.items) == [0.67, 0.91]
         assert receipt.parsing_report["item_confidence_method"] == "min_ocr_fragment_v1"
         original_ids = {item.receipt_item_id for item in receipt.items}
@@ -716,7 +721,7 @@ def test_worker_preserves_item_confidence_boundaries(receipt_owner, monkeypatch,
         assert session.get(Receipt, receipt_id).items[0].confidence == score
 
 
-def test_reprocessing_replaces_confidence_only_after_consent(
+def test_successful_ocr_preserves_confidence_when_reprocess_is_rejected(
     receipt_owner, monkeypatch
 ):
     from backend.app.core.exceptions import ConflictError
@@ -730,15 +735,7 @@ def test_reprocessing_replaces_confidence_only_after_consent(
     service = ReceiptProcessingService(SessionLocal)
     with pytest.raises(ConflictError):
         service.prepare_process(receipt_id, user.user_id, replace_items=False)
-    ticket = service.prepare_process(receipt_id, user.user_id, replace_items=True)
-    configured = confidence_pipeline(
-        [("Товар 100.00*1шт=100.00", 0.72), ("ИТОГ 100.00", 0.99)]
-    )
-    jobs.process_receipt(str(receipt_id), ticket.processing_version)
+    with pytest.raises(ConflictError):
+        service.prepare_process(receipt_id, user.user_id, replace_items=True)
     with SessionLocal() as session:
-        receipt = session.get(Receipt, receipt_id)
-        assert len(receipt.items) == 1
-        assert receipt.items[0].confidence == 0.72
-    jobs.process_receipt(str(receipt_id), ticket.processing_version - 1)
-    with SessionLocal() as session:
-        assert session.get(Receipt, receipt_id).items[0].confidence == 0.72
+        assert session.get(Receipt, receipt_id).items[0].confidence == 0.9

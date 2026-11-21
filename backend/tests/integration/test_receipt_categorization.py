@@ -11,7 +11,7 @@ from backend.app.core.exceptions import ConflictError
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Category, Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.ocr import OcrResult
 from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
 from backend.app.services.receipt_processing_service import (
@@ -33,7 +33,11 @@ def owner_receipt(client, monkeypatch):
             user_mail=f"{uuid4()}@example.com",
             user_password_hash="test-hash",
         )
-        receipt = Receipt(user=owner, image_object_key="categories/test.jpg")
+        receipt = Receipt(
+            user=owner,
+            image_object_key="categories/test.jpg",
+            processing_status=ProcessingStatus.QUEUED,
+        )
         session.add(receipt)
         session.flush()
         receipt_id = receipt.receipt_id
@@ -46,6 +50,8 @@ def parse(text=TEXT):
 
 
 def process(receipt_id):
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).processing_status = ProcessingStatus.PARSING
     assert (
         ReceiptProcessingService(SessionLocal).save_result(receipt_id, parse())
         == SaveProcessingOutcome.SAVED
@@ -88,7 +94,7 @@ def test_worker_saves_prediction_and_keeps_it_unconfirmed(
     assert body["category_source"] == "automatic"
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.items[0].suggested_category_id == default_category_id("продукты")
     assert (
         ReceiptProcessingService(SessionLocal).save_result(receipt_id, parse())
@@ -115,7 +121,7 @@ def test_manual_create_stores_suggestion_separately_from_label(owner_receipt, cl
     assert body["category_source"] == "manual"
 
 
-def test_manual_choice_preserves_suggestion_and_needs_explicit_reprocess_consent(
+def test_manual_choice_preserves_suggestion_and_successful_ocr_cannot_be_restarted(
     owner_receipt, client
 ):
     receipt_id, owner_id = owner_receipt
@@ -138,42 +144,9 @@ def test_manual_choice_preserves_suggestion_and_needs_explicit_reprocess_consent
     with pytest.raises(ConflictError):
         service.prepare_process(receipt_id, owner_id, False)
     assert item_body(client, receipt_id) == chosen
-    ticket = service.prepare_process(receipt_id, owner_id, True)
-    assert service.start_processing(receipt_id, ticket.processing_version) is not None
-    assert (
-        service.save_result(receipt_id, parse(), ticket.processing_version)
-        == SaveProcessingOutcome.SAVED
-    )
-    replaced = item_body(client, receipt_id)
-    assert replaced["category_id"] == str(default_category_id("продукты"))
-    assert replaced["category_confirmed_at"] is None
-    assert replaced["category_source"] == "automatic"
-
-
-@pytest.mark.parametrize("field", ["raw_name", "normalized_name"])
-@pytest.mark.parametrize("manual", [False, True])
-def test_rename_updates_prediction_but_keeps_manual_category(
-    owner_receipt, client, field, manual
-):
-    receipt_id, _ = owner_receipt
-    process(receipt_id)
-    body = item_body(client, receipt_id)
-    url = f"/api/receipts/{receipt_id}/items/{body['receipt_item_id']}"
-    if manual:
-        body = client.patch(
-            url, json={"category_id": str(default_category_id("сладкое"))}
-        ).json()
-    response = client.patch(url, json={field: "Чипсы сырные"})
-    assert response.status_code == 200
-    updated = response.json()
-    assert updated["suggested_category_id"] == str(default_category_id("снеки"))
-    assert updated["category_input"] == "чипсы сырные"
-    assert updated["category_id"] == (
-        str(default_category_id("сладкое"))
-        if manual
-        else str(default_category_id("снеки"))
-    )
-    assert updated["category_confirmed_at"] == body["category_confirmed_at"]
+    with pytest.raises(ConflictError):
+        service.prepare_process(receipt_id, owner_id, True)
+    assert item_body(client, receipt_id) == chosen
 
 
 def test_explicit_clear_is_kept_after_rename(owner_receipt, client):
@@ -254,6 +227,8 @@ def test_missing_default_catalog_rolls_back_result(owner_receipt):
                 Category.category_id == default_category_id("продукты")
             )
         )
+    with SessionLocal.begin() as session:
+        session.get(Receipt, receipt_id).processing_status = ProcessingStatus.PARSING
     with pytest.raises(RuntimeError, match="apply database migrations"):
         ReceiptProcessingService(SessionLocal).save_result(receipt_id, parse())
     with SessionLocal() as session:
@@ -309,6 +284,13 @@ def test_receipt_confirmation_does_not_invent_explicit_category_label(
 ):
     receipt_id, _ = owner_receipt
     process(receipt_id)
+    assert (
+        client.patch(
+            f"/api/receipts/{receipt_id}",
+            json={"purchase_datetime": "2026-10-21T10:00:00Z"},
+        ).status_code
+        == 200
+    )
     assert client.post(f"/api/receipts/{receipt_id}/confirm").status_code == 200
     body = item_body(client, receipt_id)
     assert body["category_source"] == "automatic"

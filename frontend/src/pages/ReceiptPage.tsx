@@ -5,7 +5,14 @@ import { AlertDialog, Button, Callout } from '@radix-ui/themes'
 import { ArrowLeftIcon, CheckCircleIcon, ArrowClockwiseIcon } from '@phosphor-icons/react'
 import { apiJson, apiRequest } from '../api/client'
 import type { ReceiptDetail } from '../api/types'
-import { cents, centsString, dateTime, isProcessing, money, statusLabels } from '../lib/format'
+import {
+  cents,
+  centsString,
+  dateTime,
+  isProcessing,
+  money,
+  processingStatusLabels,
+} from '../lib/format'
 import { ErrorNotice, Loading } from '../components/Feedback'
 import { StatusBadge } from '../components/StatusBadge'
 import { ReceiptImage } from '../components/ReceiptImage'
@@ -33,7 +40,7 @@ function ReceiptContent({ id }: { id: string }) {
     queryFn: ({ signal }) => apiRequest<ReceiptDetail>(`/api/receipts/${id}`, { signal }),
     refetchOnWindowFocus: false,
     refetchInterval: (query) =>
-      query.state.data && isProcessing(query.state.data.status) ? 2500 : false,
+      query.state.data && isProcessing(query.state.data.processing_status) ? 2500 : false,
   })
   const refresh = useCallback(async () => {
     await client.invalidateQueries({ queryKey: ['receipt', id] })
@@ -42,6 +49,10 @@ function ReceiptContent({ id }: { id: string }) {
   }, [client, id])
   const confirm = useMutation({
     mutationFn: () => apiJson(`/api/receipts/${id}/confirm`, 'POST'),
+    onSuccess: refresh,
+  })
+  const reviewManually = useMutation({
+    mutationFn: () => apiJson(`/api/receipts/${id}/review`, 'POST'),
     onSuccess: refresh,
   })
   const reprocess = useMutation({
@@ -57,9 +68,11 @@ function ReceiptContent({ id }: { id: string }) {
   if (receipt.isError)
     return <ErrorNotice error={receipt.error} retry={() => void receipt.refetch()} />
   const data = receipt.data
-  const processing = isProcessing(data.status)
-  const editable =
-    data.status === 'need_review' || data.status === 'completed' || data.status === 'failed'
+  const processing = isProcessing(data.processing_status)
+  const failedDraft = data.receipt_status === 'draft' && data.processing_status === 'failed'
+  const confirmed = data.receipt_status === 'confirmed'
+  const editable = !processing
+  const actionPending = confirm.isPending || reprocess.isPending || reviewManually.isPending
   const totalsComplete =
     data.items.length > 0 && data.items.every((item) => item.total_price != null)
   const sum = totalsComplete
@@ -78,7 +91,10 @@ function ReceiptContent({ id }: { id: string }) {
         <div>
           <div className="heading-status">
             <h1>{data.store_name || 'Новый чек'}</h1>
-            <StatusBadge status={data.status} />
+            <StatusBadge
+              receiptStatus={data.receipt_status}
+              processingStatus={data.processing_status}
+            />
           </div>
           <p>{dateTime(data.purchase_datetime || data.created_at)}</p>
         </div>
@@ -86,35 +102,19 @@ function ReceiptContent({ id }: { id: string }) {
       </header>
       {processing && (
         <section className="processing-panel" role="status">
-          <h2>{statusLabels[data.status]}</h2>
-          <p>Можно оставить эту страницу открытой. Статус обновится автоматически.</p>
-          <ol className="pipeline-steps">
-            {['uploaded', 'preprocessing', 'ocr_processing', 'parsing'].map((step, index) => {
-              const current = ['uploaded', 'preprocessing', 'ocr_processing', 'parsing'].indexOf(
-                data.status,
-              )
-              return (
-                <li
-                  key={step}
-                  className={index <= current ? 'reached' : ''}
-                  aria-current={step === data.status ? 'step' : undefined}
-                >
-                  {statusLabels[step as keyof typeof statusLabels]}
-                </li>
-              )
-            })}
-          </ol>
+          <h2>{processingStatusLabels[data.processing_status]}</h2>
+          <p>Чек сохранён. Статус обновится автоматически.</p>
         </section>
       )}
-      {data.status === 'failed' && (
+      {failedDraft && (
         <ErrorNotice
           error={
             data.processing_error_message ||
-            'Не удалось обработать чек. Попробуйте распознать его ещё раз.'
+            'Не удалось распознать чек. Его можно заполнить вручную.'
           }
         />
       )}
-      {data.status === 'completed' && data.confirmed_at && (
+      {confirmed && data.confirmed_at && (
         <Callout.Root className="confirmation-note">
           <Callout.Icon>
             <CheckCircleIcon size={20} />
@@ -125,6 +125,7 @@ function ReceiptContent({ id }: { id: string }) {
           </Callout.Text>
         </Callout.Root>
       )}
+      {reviewManually.isError && <ErrorNotice error={reviewManually.error} />}
       {confirm.isError && <ErrorNotice error={confirm.error} />}
       {reprocess.isError && <ErrorNotice error={reprocess.error} />}
       <div className="receipt-detail-layout">
@@ -174,24 +175,39 @@ function ReceiptContent({ id }: { id: string }) {
                 )}
                 <div className="review-confirm">
                   <p>
-                    Подтвердите чек, когда все данные верны. После этого расходы появятся в
-                    аналитике.
+                    {failedDraft
+                      ? 'Заполните реквизиты и товары вручную, чтобы перейти к проверке.'
+                      : 'Подтвердите чек, когда все данные верны. После этого расходы появятся в аналитике.'}
                   </p>
-                  <Button
-                    size="3"
-                    disabled={
-                      data.status !== 'need_review' ||
-                      dirty.size > 0 ||
-                      !totalsComplete ||
-                      confirm.isPending ||
-                      reprocess.isPending
-                    }
-                    loading={confirm.isPending}
-                    onClick={() => confirm.mutate()}
-                  >
-                    <CheckCircleIcon size={19} />
-                    {data.status === 'completed' ? 'Чек подтверждён' : 'Подтвердить чек'}
-                  </Button>
+                  {data.receipt_status === 'needs_review' && !data.purchase_datetime && (
+                    <p>Укажите дату покупки в реквизитах чека.</p>
+                  )}
+                  {failedDraft ? (
+                    <Button
+                      size="3"
+                      disabled={dirty.size > 0 || actionPending}
+                      loading={reviewManually.isPending}
+                      onClick={() => reviewManually.mutate()}
+                    >
+                      Перейти к ручной проверке
+                    </Button>
+                  ) : (
+                    <Button
+                      size="3"
+                      disabled={
+                        data.receipt_status !== 'needs_review' ||
+                        dirty.size > 0 ||
+                        !data.purchase_datetime ||
+                        !totalsComplete ||
+                        actionPending
+                      }
+                      loading={confirm.isPending}
+                      onClick={() => confirm.mutate()}
+                    >
+                      <CheckCircleIcon size={19} />
+                      {confirmed ? 'Чек подтверждён' : 'Подтвердить чек'}
+                    </Button>
+                  )}
                 </div>
               </section>
             </>
@@ -201,15 +217,14 @@ function ReceiptContent({ id }: { id: string }) {
               <p>Редактирование откроется после окончания обработки.</p>
             </section>
           )}
-          {!processing && (
+          {failedDraft && data.manual_ocr_attempts_remaining === 0 && (
+            <p>Ручные попытки исчерпаны. Заполните чек и перейдите к проверке.</p>
+          )}
+          {failedDraft && data.manual_ocr_attempts_remaining > 0 && (
             <div className="reprocess-area">
               <AlertDialog.Root>
                 <AlertDialog.Trigger>
-                  <Button
-                    variant="ghost"
-                    color="gray"
-                    disabled={dirty.size > 0 || reprocess.isPending || confirm.isPending}
-                  >
+                  <Button variant="ghost" color="gray" disabled={dirty.size > 0 || actionPending}>
                     <ArrowClockwiseIcon size={18} />
                     Распознать повторно
                   </Button>
@@ -217,9 +232,8 @@ function ReceiptContent({ id }: { id: string }) {
                 <AlertDialog.Content maxWidth="490px">
                   <AlertDialog.Title>Повторить распознавание?</AlertDialog.Title>
                   <AlertDialog.Description>
-                    Товарные позиции будут заменены новым результатом, включая ручные исправления
-                    товаров. Подтверждение чека будет сброшено. Сохранённые ручные исправления
-                    данных чека останутся.
+                    Осталось ручных попыток: {data.manual_ocr_attempts_remaining}. Новый результат
+                    заменит товарные позиции. Правки реквизитов чека сохранятся.
                   </AlertDialog.Description>
                   <div className="dialog-actions">
                     <AlertDialog.Cancel>

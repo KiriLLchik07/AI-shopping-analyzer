@@ -5,7 +5,7 @@ import { PlusIcon, ArrowUpRightIcon, ReceiptIcon, MagnifyingGlassIcon } from '@p
 import { useEffect, useState } from 'react'
 import { apiRequest } from '../api/client'
 import type { Page, Receipt } from '../api/types'
-import { dateTime, isProcessing, money, statusLabels } from '../lib/format'
+import { dateTime, isProcessing, money, receiptStatusLabels } from '../lib/format'
 import { Empty, ErrorNotice, Loading } from '../components/Feedback'
 import { StatusBadge } from '../components/StatusBadge'
 import { Pagination } from '../components/Pagination'
@@ -18,13 +18,13 @@ export function ReceiptsPage() {
   const [search, setSearch] = useState(store)
   useEffect(() => setSearch(store), [store])
   const query = new URLSearchParams({ page: String(page), page_size: '15' })
-  if (status in statusLabels) query.set('status', status)
+  if (status in receiptStatusLabels) query.set('receipt_status', status)
   if (store) query.set('store_name', store)
   const receipts = useQuery({
     queryKey: ['receipts', query.toString()],
     queryFn: ({ signal }) => apiRequest<Page<Receipt>>(`/api/receipts?${query}`, { signal }),
     refetchInterval: (q) =>
-      q.state.data?.items.some((r) => isProcessing(r.status)) ? 3000 : false,
+      q.state.data?.items.some((r) => isProcessing(r.processing_status)) ? 3000 : false,
   })
   function filter(key: string, value: string) {
     const next = new URLSearchParams(params)
@@ -76,7 +76,7 @@ export function ReceiptsPage() {
               onChange={(e) => filter('status', e.target.value)}
             >
               <option value="">Все чеки</option>
-              {Object.entries(statusLabels).map(([value, label]) => (
+              {Object.entries(receiptStatusLabels).map(([value, label]) => (
                 <option key={value} value={value}>
                   {label}
                 </option>
@@ -136,7 +136,10 @@ export function ReceiptsPage() {
                       <small>{dateTime(receipt.purchase_datetime || receipt.created_at)}</small>
                     </div>
                     <div className="receipt-row-status">
-                      <StatusBadge status={receipt.status} />
+                      <StatusBadge
+                        receiptStatus={receipt.receipt_status}
+                        processingStatus={receipt.processing_status}
+                      />
                     </div>
                     <strong className="amount">{money(receipt.total_amount)}</strong>
                     <ArrowUpRightIcon className="row-arrow" size={19} />

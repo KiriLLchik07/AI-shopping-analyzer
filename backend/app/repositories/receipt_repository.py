@@ -4,7 +4,8 @@ from uuid import UUID
 from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
-from backend.app.models.enums import ReceiptStatus
+from backend.app.core.logging import get_correlation_id, normalize_correlation_id
+from backend.app.models.enums import ReceiptReviewStatus
 from backend.app.models.receipt import Receipt, ReceiptItem
 
 
@@ -18,7 +19,7 @@ class ReceiptRepository:
         date_from: datetime | None,
         date_to: datetime | None,
         store_name: str | None,
-        status: ReceiptStatus | None,
+        receipt_status: ReceiptReviewStatus | None,
     ):
         filters = [Receipt.receipt_user_id == user_id]
 
@@ -28,8 +29,8 @@ class ReceiptRepository:
             filters.append(Receipt.purchase_datetime < date_to)
         if store_name is not None:
             filters.append(Receipt.store_name.icontains(store_name, autoescape=True))
-        if status is not None:
-            filters.append(Receipt.status == status)
+        if receipt_status is not None:
+            filters.append(Receipt.receipt_status == receipt_status)
         return filters
 
     def get_receipts(
@@ -40,9 +41,11 @@ class ReceiptRepository:
         date_from: datetime | None,
         date_to: datetime | None,
         store_name: str | None,
-        status: ReceiptStatus | None,
+        receipt_status: ReceiptReviewStatus | None,
     ) -> list[Receipt]:
-        filters = self._build_filters(user_id, date_from, date_to, store_name, status)
+        filters = self._build_filters(
+            user_id, date_from, date_to, store_name, receipt_status
+        )
         query = (
             select(Receipt)
             .where(*filters)
@@ -60,14 +63,14 @@ class ReceiptRepository:
         date_from: datetime | None,
         date_to: datetime | None,
         store_name: str | None,
-        status: ReceiptStatus | None,
+        receipt_status: ReceiptReviewStatus | None,
     ) -> int:
         filters = self._build_filters(
             user_id=user_id,
             date_from=date_from,
             date_to=date_to,
             store_name=store_name,
-            status=status,
+            receipt_status=receipt_status,
         )
 
         query = select(func.count()).select_from(Receipt).where(*filters)
@@ -95,14 +98,14 @@ class ReceiptRepository:
         receipt.manually_updated_fields = sorted(
             set(receipt.manually_updated_fields or ()) | update_data.keys()
         )
-        if receipt.status == ReceiptStatus.COMPLETED:
-            receipt.status = ReceiptStatus.NEED_REVIEW
+        if receipt.receipt_status == ReceiptReviewStatus.CONFIRMED:
+            receipt.receipt_status = ReceiptReviewStatus.NEEDS_REVIEW
         receipt.confirmed_at = None
         self.db_session.flush()
         return receipt
 
     def confirm_receipt(self, receipt: Receipt, confirmed_at: datetime) -> None:
-        receipt.status = ReceiptStatus.COMPLETED
+        receipt.receipt_status = ReceiptReviewStatus.CONFIRMED
         receipt.confirmed_at = confirmed_at
         self.db_session.flush()
 
@@ -170,7 +173,7 @@ class ReceiptRepository:
             receipt_id=receipt_id,
             receipt_user_id=user_id,
             image_object_key=image_object_key,
-            status=ReceiptStatus.UPLOADED,
+            ocr_correlation_id=normalize_correlation_id(get_correlation_id()),
         )
 
         self.db_session.add(receipt)
@@ -185,12 +188,12 @@ class ReceiptRepository:
             .values(
                 items_revision=Receipt.items_revision + 1,
                 confirmed_at=None,
-                status=case(
+                receipt_status=case(
                     (
-                        Receipt.status == ReceiptStatus.COMPLETED,
-                        ReceiptStatus.NEED_REVIEW,
+                        Receipt.receipt_status == ReceiptReviewStatus.CONFIRMED,
+                        ReceiptReviewStatus.NEEDS_REVIEW,
                     ),
-                    else_=Receipt.status,
+                    else_=Receipt.receipt_status,
                 ),
             )
         )

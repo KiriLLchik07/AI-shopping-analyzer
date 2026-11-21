@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.categorization.catalog import DEFAULT_CATEGORIES
 from backend.app.main import app
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.models.user import User
 
@@ -229,28 +229,28 @@ def test_receipt_filters_are_applied_together(
                 user=user,
                 store_name="SuperMarket",
                 purchase_datetime=target_date,
-                status=ReceiptStatus.COMPLETED,
+                receipt_status=ReceiptReviewStatus.CONFIRMED,
                 image_object_key="receipts/matching.webp",
             ),
             Receipt(
                 user=user,
                 store_name="Other store",
                 purchase_datetime=target_date,
-                status=ReceiptStatus.COMPLETED,
+                receipt_status=ReceiptReviewStatus.CONFIRMED,
                 image_object_key="receipts/wrong-store.webp",
             ),
             Receipt(
                 user=user,
                 store_name="SuperMarket",
                 purchase_datetime=target_date - timedelta(days=1),
-                status=ReceiptStatus.COMPLETED,
+                receipt_status=ReceiptReviewStatus.CONFIRMED,
                 image_object_key="receipts/wrong-date.webp",
             ),
             Receipt(
                 user=user,
                 store_name="SuperMarket",
                 purchase_datetime=target_date,
-                status=ReceiptStatus.FAILED,
+                processing_status=ProcessingStatus.FAILED,
                 image_object_key="receipts/wrong-status.webp",
             ),
         ]
@@ -263,7 +263,7 @@ def test_receipt_filters_are_applied_together(
             "date_from": "2026-05-10",
             "date_to": "2026-05-10",
             "store_name": "market",
-            "status": "completed",
+            "receipt_status": "confirmed",
         },
     )
 

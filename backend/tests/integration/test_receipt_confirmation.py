@@ -11,7 +11,7 @@ from backend.app.core.exceptions import ConflictError
 from backend.app.db.session import SessionLocal
 from backend.app.main import app
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.services.receipt_processing_service import (
     ReceiptProcessingService,
@@ -34,7 +34,8 @@ def review_receipt(client, monkeypatch):
         receipt = Receipt(
             user=owner,
             image_object_key="confirm/test.jpg",
-            status=ReceiptStatus.NEED_REVIEW,
+            receipt_status=ReceiptReviewStatus.NEEDS_REVIEW,
+            processing_status=ProcessingStatus.SUCCEEDED,
             store_name="Магазин",
             purchase_datetime=datetime(2026, 10, 20, 12, tzinfo=UTC),
             total_amount=Decimal("100.00"),
@@ -67,7 +68,7 @@ def test_confirm_persists_status_and_repeated_request_is_idempotent(
     response = client.post(f"{url}/confirm")
     assert response.status_code == 200
     confirmed = response.json()
-    assert confirmed["status"] == "completed"
+    assert confirmed["receipt_status"] == "confirmed"
     confirmed_at = datetime.fromisoformat(confirmed["confirmed_at"])
     assert started_at <= confirmed_at <= datetime.now(UTC)
     assert client.get(url).json()["confirmed_at"] == confirmed["confirmed_at"]
@@ -84,7 +85,7 @@ def test_confirm_persists_status_and_repeated_request_is_idempotent(
     assert repeated.json() == confirmed
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.COMPLETED
+        assert receipt.receipt_status == ReceiptReviewStatus.CONFIRMED
         assert receipt.confirmed_at == confirmed_at
         assert receipt.items_revision == 0
         assert session.get(ReceiptItem, item_id) is not None
@@ -93,11 +94,11 @@ def test_confirm_persists_status_and_repeated_request_is_idempotent(
 @pytest.mark.parametrize(
     "status",
     [
-        ReceiptStatus.UPLOADED,
-        ReceiptStatus.PREPROCESSING,
-        ReceiptStatus.OCR_PROCESSING,
-        ReceiptStatus.PARSING,
-        ReceiptStatus.FAILED,
+        ProcessingStatus.PENDING_DISPATCH,
+        ProcessingStatus.PREPROCESSING,
+        ProcessingStatus.OCR_PROCESSING,
+        ProcessingStatus.PARSING,
+        ProcessingStatus.FAILED,
     ],
 )
 def test_confirmation_rejects_receipts_not_ready_for_review(
@@ -105,11 +106,13 @@ def test_confirmation_rejects_receipts_not_ready_for_review(
 ):
     receipt_id, _, _ = review_receipt
     with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = status
+        receipt = session.get(Receipt, receipt_id)
+        receipt.receipt_status = ReceiptReviewStatus.DRAFT
+        receipt.processing_status = status
     response = client.post(f"/api/receipts/{receipt_id}/confirm")
     assert response.status_code == 409
     with SessionLocal() as session:
-        assert session.get(Receipt, receipt_id).status == status
+        assert session.get(Receipt, receipt_id).processing_status == status
 
 
 def test_confirmation_requires_owner_and_hides_unknown_receipt(
@@ -130,7 +133,10 @@ def test_confirmation_requires_owner_and_hides_unknown_receipt(
         assert response.status_code == 404
         assert response.json() == {"detail": "Receipt not found"}
     with SessionLocal() as session:
-        assert session.get(Receipt, receipt_id).status == ReceiptStatus.NEED_REVIEW
+        assert (
+            session.get(Receipt, receipt_id).receipt_status
+            == ReceiptReviewStatus.NEEDS_REVIEW
+        )
 
 
 def test_confirmation_requires_authentication(client):
@@ -165,7 +171,7 @@ def test_manual_edit_requires_confirmation_again(review_receipt, client, mutatio
     else:
         response = client.delete(f"{url}/items/{item_id}")
     assert response.status_code in {200, 201, 204}
-    assert client.get(url).json()["status"] == "need_review"
+    assert client.get(url).json()["receipt_status"] == "needs_review"
     assert client.get(url).json()["confirmed_at"] is None
     with SessionLocal() as session:
         assert session.get(Receipt, receipt_id).confirmed_at is None
@@ -184,7 +190,7 @@ def test_manual_edit_requires_confirmation_again(review_receipt, client, mutatio
             == 201
         )
     confirmed = client.post(f"{url}/confirm").json()
-    assert confirmed["status"] == "completed"
+    assert confirmed["receipt_status"] == "confirmed"
     assert datetime.fromisoformat(confirmed["confirmed_at"]) >= initial_time
 
 
@@ -198,20 +204,18 @@ def test_invalid_edit_does_not_invalidate_confirmation(review_receipt, client):
         client.patch(f"{url}/items/{item_id}", json={"quantity": "-1"}).status_code
         == 422
     )
-    assert client.get(url).json()["status"] == "completed"
+    assert client.get(url).json()["receipt_status"] == "confirmed"
     assert client.get(url).json()["confirmed_at"] == confirmed_at
 
 
-def test_reprocessing_requires_new_confirmation(review_receipt, client):
-    receipt_id, _, owner_id = review_receipt
+def test_confirmed_receipt_cannot_be_reprocessed(review_receipt, client):
+    receipt_id, _, _ = review_receipt
     url = f"/api/receipts/{receipt_id}"
     assert client.post(f"{url}/confirm").status_code == 200
-    ReceiptProcessingService(SessionLocal).prepare_process(receipt_id, owner_id, True)
-    assert client.get(url).json()["status"] == "uploaded"
-    assert client.get(url).json()["confirmed_at"] is None
-    with SessionLocal() as session:
-        assert session.get(Receipt, receipt_id).confirmed_at is None
-    assert client.post(f"{url}/confirm").status_code == 409
+    assert (
+        client.post(f"{url}/reprocess", json={"replace_items": True}).status_code == 409
+    )
+    assert client.get(url).json()["receipt_status"] == "confirmed"
 
 
 def test_concurrent_confirmation_is_idempotent(review_receipt):
@@ -222,13 +226,13 @@ def test_concurrent_confirmation_is_idempotent(review_receipt):
         with SessionLocal() as session:
             barrier.wait(timeout=5)
             receipt = ReceiptService(session).confirm_receipt(receipt_id, owner_id)
-            return receipt.status, receipt.updated_at, receipt.confirmed_at
+            return receipt.receipt_status, receipt.updated_at, receipt.confirmed_at
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         futures = [executor.submit(confirm) for _ in range(2)]
         results = [future.result(timeout=10) for future in futures]
     assert results[0] == results[1]
-    assert results[0][0] == ReceiptStatus.COMPLETED
+    assert results[0][0] == ReceiptReviewStatus.CONFIRMED
     assert results[0][2] is not None
 
 
@@ -267,9 +271,9 @@ def test_receipt_total_must_match_current_items_and_can_be_fixed(
     response = client.post(f"{url}/confirm")
     assert response.status_code == 400
     assert "Сумма позиций" in response.json()["detail"]
-    assert client.get(url).json()["status"] == "need_review"
+    assert client.get(url).json()["receipt_status"] == "needs_review"
     assert client.patch(url, json={"total_amount": "100"}).status_code == 200
-    assert client.post(f"{url}/confirm").json()["status"] == "completed"
+    assert client.post(f"{url}/confirm").json()["receipt_status"] == "confirmed"
 
 
 def test_missing_receipt_total_cannot_be_confirmed(review_receipt, client):
@@ -277,7 +281,7 @@ def test_missing_receipt_total_cannot_be_confirmed(review_receipt, client):
     url = f"/api/receipts/{receipt_id}"
     assert client.patch(url, json={"total_amount": None}).status_code == 200
     assert client.post(f"{url}/confirm").status_code == 400
-    assert client.get(url).json()["status"] == "need_review"
+    assert client.get(url).json()["receipt_status"] == "needs_review"
 
 
 def test_missing_ocr_quantity_cannot_be_confirmed(review_receipt, client):
@@ -357,7 +361,7 @@ def test_legacy_completed_receipt_gets_time_only_after_valid_confirmation(
 ):
     receipt_id, _, _ = review_receipt
     with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = ReceiptStatus.COMPLETED
+        session.get(Receipt, receipt_id).receipt_status = ReceiptReviewStatus.CONFIRMED
     url = f"/api/receipts/{receipt_id}"
     assert client.get(url).json()["confirmed_at"] is None
     response = client.post(f"{url}/confirm")
@@ -375,7 +379,7 @@ def test_legacy_completed_receipt_with_invalid_arithmetic_is_not_timestamped(
     receipt_id, _, _ = review_receipt
     with SessionLocal.begin() as session:
         receipt = session.get(Receipt, receipt_id)
-        receipt.status = ReceiptStatus.COMPLETED
+        receipt.receipt_status = ReceiptReviewStatus.CONFIRMED
         receipt.total_amount = Decimal(200)
     url = f"/api/receipts/{receipt_id}"
     assert client.post(f"{url}/confirm").status_code == 400
@@ -391,7 +395,7 @@ def test_rejected_reprocess_preserves_confirmation_time(review_receipt, client):
             receipt_id, owner_id, False
         )
     body = client.get(url).json()
-    assert body["status"] == "completed"
+    assert body["receipt_status"] == "confirmed"
     assert body["confirmed_at"] == confirmed_at
 
 
@@ -419,5 +423,5 @@ def test_confirmation_time_rolls_back_with_status(review_receipt, monkeypatch):
         session.rollback()
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.confirmed_at is None

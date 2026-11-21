@@ -93,6 +93,19 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  receipt-dispatcher:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: api
+    command: ["python", "-m", "backend.app.workers.receipt_dispatcher"]
+    env_file:
+      - ./backend/.env.docker
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
   worker:
     build:
       context: ./backend

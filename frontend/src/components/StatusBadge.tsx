@@ -1,24 +1,28 @@
 import { Badge } from '@radix-ui/themes'
-import { statusLabels, isProcessing } from '../lib/format'
-import type { ReceiptStatus } from '../api/types'
+import { isProcessing, processingStatusLabels, receiptStatusLabels } from '../lib/format'
+import type { ProcessingStatus, ReceiptReviewStatus } from '../api/types'
 
-export function StatusBadge({ status }: { status: ReceiptStatus }) {
-  return (
-    <Badge
-      color={
-        status === 'failed'
+export function StatusBadge({
+  receiptStatus,
+  processingStatus,
+}: {
+  receiptStatus: ReceiptReviewStatus
+  processingStatus: ProcessingStatus
+}) {
+  const active = isProcessing(processingStatus)
+  const draft = receiptStatus === 'draft'
+  const color =
+    receiptStatus === 'confirmed'
+      ? 'jade'
+      : receiptStatus === 'needs_review'
+        ? 'amber'
+        : processingStatus === 'failed'
           ? 'red'
-          : status === 'need_review'
-            ? 'amber'
-            : status === 'completed'
-              ? 'jade'
-              : 'gray'
-      }
-      variant="soft"
-      size="2"
-    >
-      {isProcessing(status) && <span className="processing-mark" aria-hidden="true" />}
-      {statusLabels[status] ?? status}
+          : 'gray'
+  return (
+    <Badge color={color} variant="soft" size="2">
+      {active && <span className="processing-mark" aria-hidden="true" />}
+      {draft ? processingStatusLabels[processingStatus] : receiptStatusLabels[receiptStatus]}
     </Badge>
   )
 }

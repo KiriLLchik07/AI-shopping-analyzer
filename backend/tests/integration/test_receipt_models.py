@@ -5,7 +5,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.models.receipt import Category, Receipt, ReceiptItem
 from backend.app.models.user import User
 
@@ -50,7 +50,7 @@ def test_minimal_receipt_has_expected_defaults(
     db_session.commit()
     db_session.refresh(receipt)
 
-    assert receipt.status is ReceiptStatus.UPLOADED
+    assert receipt.processing_status is ProcessingStatus.PENDING_DISPATCH
     assert receipt.store_name is None
     assert receipt.store_inn is None
     assert receipt.purchase_datetime is None
@@ -61,12 +61,12 @@ def test_minimal_receipt_has_expected_defaults(
     assert receipt.updated_at is not None
 
 
-@pytest.mark.parametrize("status", list(ReceiptStatus))
+@pytest.mark.parametrize("status", list(ReceiptReviewStatus))
 def test_receipt_status_round_trip(
     db_session: Session,
-    status: ReceiptStatus,
+    status: ReceiptReviewStatus,
 ) -> None:
-    receipt = make_receipt(make_user(), status=status)
+    receipt = make_receipt(make_user(), receipt_status=status)
     db_session.add(receipt)
     db_session.commit()
 
@@ -76,7 +76,7 @@ def test_receipt_status_round_trip(
     saved_receipt = db_session.get(Receipt, receipt_id)
 
     assert saved_receipt is not None
-    assert saved_receipt.status is status
+    assert saved_receipt.receipt_status is status
 
 
 def test_money_values_are_returned_as_exact_decimals(

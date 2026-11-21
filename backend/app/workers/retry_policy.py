@@ -12,9 +12,9 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 from redis import Redis
-from redis.exceptions import RedisError
 from rq.exceptions import AbandonedJobError
 from rq.job import Job
+from sqlalchemy.exc import OperationalError
 
 from backend.app.core.logging import log_context
 from backend.app.db.session import SessionLocal
@@ -50,6 +50,13 @@ def is_interruption_error(error: BaseException) -> bool:
 def is_retryable_error(error: BaseException) -> bool:
     if is_interruption_error(error):
         return True
+    if isinstance(error, OperationalError):
+        sqlstate = getattr(error.orig, "sqlstate", None) or ""
+        return (
+            error.connection_invalidated
+            or sqlstate.startswith("08")
+            or sqlstate in {"57P01", "57P02", "57P03"}
+        )
 
     if isinstance(error, ObjectStorageError):
         cause = error.__cause__
@@ -102,20 +109,6 @@ def get_receipt_job_arguments(job: Job) -> tuple[UUID, int]:
     return receipt_id, processing_version
 
 
-def restore_interrupted_receipt(job: Job) -> bool:
-    receipt_id, processing_version = get_receipt_job_arguments(job)
-    service = ReceiptProcessingService(SessionLocal)
-    try:
-        changed = service.mark_interrupted(
-            receipt_id=receipt_id, processing_version=processing_version
-        )
-    except Exception:
-        logger.exception("Could not persist interrupted receipt state")
-        raise
-    logger.info("Receipt interruption handled state_changed=%s", changed)
-    return changed
-
-
 def receipt_failure_callback(
     job: Job,
     connection: Redis,
@@ -124,74 +117,14 @@ def receipt_failure_callback(
     traceback: TracebackType | StackSummary | None,
 ) -> None:
     with log_context(**get_job_log_context(job)):
-        if is_interruption_error(exc_value) and restore_interrupted_receipt(job):
+        receipt_id, version = get_receipt_job_arguments(job)
+        changed = ReceiptProcessingService(SessionLocal).mark_failed(
+            receipt_id, exc_value, version, retryable=is_retryable_error(exc_value)
+        )
+        if changed and is_interruption_error(exc_value):
             processing_metrics.record(
                 ProcessingStage.PIPELINE, MetricOutcome.INTERRUPTED
             )
-
-        _apply_retry_policy(
-            job=job,
-            exc_type=exc_type,
-            exc_value=exc_value,
-        )
-
-
-def _apply_retry_policy(
-    job: Job,
-    exc_type: type[BaseException],
-    exc_value: BaseException,
-) -> None:
-    retries_left = job.retries_left or 0
-
-    job.retries_left = 0
-    retry_allowed = False
-    reason = "retry_limit_reached"
-
-    if retries_left > 0:
-        if not is_retryable_error(exc_value):
-            reason = "non_retryable_error"
-        else:
-            try:
-                receipt_id, processing_version = get_receipt_job_arguments(job)
-
-                service = ReceiptProcessingService(SessionLocal)
-
-                retry_allowed = service.can_retry_processing(
-                    receipt_id=receipt_id,
-                    processing_version=processing_version,
-                )
-
-                reason = (
-                    "temporary_error"
-                    if retry_allowed
-                    else "receipt_state_does_not_allow_retry"
-                )
-
-            except Exception:
-                reason = "retry_state_check_failed"
-
-                logger.exception("Could not verify receipt retry eligibility")
-
-    if retry_allowed:
-        job.retries_left = retries_left
-
-        logger.info(
-            "Receipt retry permitted delay_seconds=%s retries_left=%s error_type=%s",
-            job.get_retry_interval(),
-            retries_left,
-            exc_type.__name__,
-        )
-    else:
-        logger.info(
-            "Receipt retry disabled reason=%s error_type=%s",
-            reason,
-            exc_type.__name__,
-        )
-
-    try:
-        job.save()
-    except RedisError:
-        logger.exception("Could not persist receipt retry policy")
 
 
 def receipt_work_horse_killed_handler(

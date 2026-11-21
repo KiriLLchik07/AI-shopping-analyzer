@@ -22,7 +22,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.db.base import Base
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import (
+    MAX_MANUAL_OCR_RUNS,
+    ProcessingStatus,
+    ReceiptReviewStatus,
+)
 
 if TYPE_CHECKING:
     from backend.app.models.user import User
@@ -55,15 +59,16 @@ class Receipt(Base):
     manually_updated_fields: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
     )
-    status: Mapped[ReceiptStatus] = mapped_column(
+    receipt_status: Mapped[ReceiptReviewStatus] = mapped_column(
         Enum(
-            ReceiptStatus,
-            name="receipt_status",
+            ReceiptReviewStatus,
+            native_enum=False,
+            length=16,
             values_callable=lambda enum: [item.value for item in enum],
         ),
         nullable=False,
-        default=ReceiptStatus.UPLOADED,
-        server_default=ReceiptStatus.UPLOADED.value,
+        default=ReceiptReviewStatus.DRAFT,
+        server_default=ReceiptReviewStatus.DRAFT.value,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -100,6 +105,38 @@ class Receipt(Base):
     items: Mapped[list["ReceiptItem"]] = relationship(
         back_populates="receipt", cascade="all, delete-orphan", passive_deletes=True
     )
+
+    processing_status: Mapped[ProcessingStatus] = mapped_column(
+        Enum(
+            ProcessingStatus,
+            native_enum=False,
+            length=24,
+            values_callable=lambda enum: [item.value for item in enum],
+        ),
+        nullable=False,
+        default=ProcessingStatus.PENDING_DISPATCH,
+        server_default=ProcessingStatus.PENDING_DISPATCH.value,
+    )
+
+    ocr_due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        index=True,
+    )
+
+    manual_ocr_runs: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    automatic_ocr_retries: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    ocr_correlation_id: Mapped[str | None] = mapped_column(String(128))
+
+    @property
+    def manual_ocr_attempts_remaining(self) -> int:
+        return max(0, MAX_MANUAL_OCR_RUNS - self.manual_ocr_runs)
 
     __table_args__ = (
         Index("ix_receipts_user_datetime", "receipt_user_id", "purchase_datetime"),

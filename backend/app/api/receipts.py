@@ -1,4 +1,3 @@
-import logging
 from typing import Annotated
 from uuid import UUID
 
@@ -6,14 +5,11 @@ from fastapi import (
     APIRouter,
     Depends,
     File,
-    HTTPException,
     Path,
     Query,
     Response,
     UploadFile,
 )
-from redis.exceptions import RedisError
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from backend.app.api.dependencies.auth import get_current_user
@@ -40,11 +36,9 @@ from backend.app.services.receipt_service import ReceiptService
 from backend.app.services.receipt_upload_service import ReceiptUploadService
 from backend.app.storage.factory import get_object_storage
 from backend.app.storage.interface import ObjectStorage
-from backend.app.workers.queue import enqueue_receipt
+from backend.app.workers.queue import receipt_job_id
 
 router = APIRouter()
-
-logger = logging.getLogger(__name__)
 
 
 @router.get("/api/receipts", response_model=ReceiptListResponse)
@@ -90,6 +84,18 @@ def update_receipt(
         payload=payload, receipt_id=receipt_id, user_id=user.user_id
     )
 
+    return ReceiptResponse.model_validate(receipt)
+
+
+@router.post("/api/receipts/{receipt_id}/review", response_model=ReceiptResponse)
+def review_receipt_manually(
+    receipt_id: UUID,
+    db_session: Annotated[Session, Depends(get_db)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> ReceiptResponse:
+    receipt = ReceiptService(db_session).review_receipt_manually(
+        receipt_id, user.user_id
+    )
     return ReceiptResponse.model_validate(receipt)
 
 
@@ -191,28 +197,6 @@ def upload_receipt(
         cleanup_session_factory=SessionLocal,
     )
     receipt = service.upload(user_id=user.user_id, file=file.file)
-    try:
-        enqueue_receipt(
-            receipt.receipt_id, processing_version=receipt.processing_version
-        )
-    except RedisError as error:
-        logger.exception(
-            "Could not confirm receipt enqueue receipt_id=%s",
-            receipt.receipt_id,
-        )
-
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "receipt_enqueue_unconfirmed",
-                "message": (
-                    "Чек сохранён, но не удалось подтвердить постановку "
-                    "в очередь обработки. Не загружайте изображение повторно."
-                ),
-                "receipt_id": str(receipt.receipt_id),
-            },
-        ) from error
-
     return ReceiptResponse.model_validate(receipt)
 
 
@@ -264,46 +248,8 @@ def reprocess_receipt(
         replace_items=payload.replace_items if payload else False,
     )
 
-    try:
-        job_id = enqueue_receipt(
-            ticket.receipt_id,
-            processing_version=ticket.processing_version,
-        )
-    except RedisError as error:
-        logger.exception(
-            "Could not confirm reprocess enqueue receipt_id=%s processing_version=%s",
-            ticket.receipt_id,
-            ticket.processing_version,
-        )
-
-        try:
-            service.mark_enqueue_unconfirmed(
-                receipt_id=ticket.receipt_id,
-                processing_version=ticket.processing_version,
-            )
-        except SQLAlchemyError:
-            logger.exception(
-                "Could not persist reprocess enqueue failure "
-                "receipt_id=%s processing_version=%s",
-                ticket.receipt_id,
-                ticket.processing_version,
-            )
-
-        raise HTTPException(
-            status_code=503,
-            detail={
-                "code": "receipt_enqueue_unconfirmed",
-                "message": (
-                    "Не удалось подтвердить постановку чека "
-                    "в очередь. Проверьте текущий статус чека."
-                ),
-                "receipt_id": str(ticket.receipt_id),
-                "processing_version": ticket.processing_version,
-            },
-        ) from error
-
     return ReceiptReprocessResponse(
         receipt_id=ticket.receipt_id,
         processing_version=ticket.processing_version,
-        job_id=job_id,
+        job_id=receipt_job_id(ticket.receipt_id, ticket.processing_version),
     )

@@ -3,21 +3,19 @@ from uuid import uuid4
 
 import pytest
 from rq import SimpleWorker
-from rq.job import Job, JobStatus
-from rq.scheduler import RQScheduler
 from rq.timeouts import TimerDeathPenalty
 from sqlalchemy import select
 
 from backend.app.core.config import setting
 from backend.app.db.session import SessionLocal
 from backend.app.models import Receipt, ReceiptItem, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.processing import ReceiptProcessingResult
 from backend.app.schemas.request import ReceiptItemCreateRequest
 from backend.app.services.receipt_pipeline import ReceiptPipeline
-from backend.app.services.receipt_processing_service import ReceiptProcessingService
 from backend.app.workers import jobs
-from backend.app.workers.queue import enqueue_receipt, queue_connection, receipt_queue
+from backend.app.workers.queue import queue_connection, receipt_queue
+from backend.app.workers.receipt_dispatcher import advance_due_receipt
 
 pytestmark = pytest.mark.integration
 
@@ -74,156 +72,84 @@ def run_queue():
     worker.work(burst=True, with_scheduler=False, logging_level="CRITICAL")
 
 
-def release_scheduled(job):
-    registry = receipt_queue.scheduled_job_registry
-    scheduler = RQScheduler([receipt_queue], connection=queue_connection)
-    scheduler.acquire_locks()
-    try:
-        scheduler.enqueue_scheduled_jobs()
-        assert receipt_queue.count == 0  # Backoff has not elapsed yet.
-        assert job.id in registry.get_job_ids()
-        # Move only the test job's due date into the past; never sleep for backoff.
-        queue_connection.zadd(registry.key, {job.id: 0})
-        scheduler.enqueue_scheduled_jobs()
-        assert receipt_queue.job_ids == [job.id]
-        assert job.id not in registry.get_job_ids()
-    finally:
-        scheduler.release_locks()
+def release_scheduled(receipt_id):
+    with SessionLocal.begin() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.processing_status == ProcessingStatus.RETRY_SCHEDULED
+        assert receipt.ocr_due_at > datetime.now(UTC)
+        receipt.ocr_due_at = datetime.now(UTC)
 
 
 def test_backoff_and_retry_limit(receipt_id, pipeline):
-    job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
-    assert job.args == (str(receipt_id), 1)
-    assert job.retries_left == 3
-    assert job.retry_intervals == [10, 30, 90]
-    for attempt, delay in enumerate((10, 30, 90), start=1):
-        before = datetime.now(UTC).timestamp()
+    for attempt in range(4):
+        if attempt:
+            assert not advance_due_receipt()
+            release_scheduled(receipt_id)
+        assert advance_due_receipt()
         run_queue()
-        after = datetime.now(UTC).timestamp()
-        job.refresh()
-        assert job.get_status() == JobStatus.SCHEDULED
-        assert job.retries_left == 3 - attempt
-        due = receipt_queue.scheduled_job_registry.get_scheduled_time(job).timestamp()
-        assert before + delay - 1 <= due <= after + delay + 1
         with SessionLocal() as session:
             receipt = session.get(Receipt, receipt_id)
-            assert receipt.status == ReceiptStatus.FAILED
-            assert receipt.processing_error_message
-            assert "private provider error" not in receipt.processing_error_message
-        release_scheduled(job)
-    run_queue()
-    job.refresh()
+            assert receipt.automatic_ocr_retries == min(attempt + 1, 3)
+            assert receipt.processing_status == (
+                ProcessingStatus.RETRY_SCHEDULED
+                if attempt < 3
+                else ProcessingStatus.FAILED
+            )
     assert pipeline.calls == 4
-    assert job.retries_left == 0
-    assert job.get_status() == JobStatus.FAILED
-    assert receipt_queue.count == 0
-    assert receipt_queue.scheduled_job_registry.count == 0
-    assert job.id in receipt_queue.failed_job_registry.get_job_ids()
+    assert not advance_due_receipt()
 
 
 def test_retry_recovers_and_saves_items_once(receipt_id, pipeline):
     pipeline.failures = 1
-    job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
+    assert advance_due_receipt()
     run_queue()
-    assert job.get_status() == JobStatus.SCHEDULED
-    release_scheduled(job)
+    release_scheduled(receipt_id)
+    assert advance_due_receipt()
     run_queue()
-    assert job.get_status() == JobStatus.FINISHED
-    enqueue_receipt(receipt_id)
-    run_queue()
-    assert pipeline.calls == 2
+    jobs.process_receipt(str(receipt_id), 1)
     with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
-        assert receipt.processing_error_message is None
-        assert receipt.processing_error_code is None
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
+        assert receipt.processing_status == ProcessingStatus.SUCCEEDED
         assert (
             len(
                 session.scalars(
-                    select(ReceiptItem).where(
-                        ReceiptItem.receipt_id == receipt_id,
-                    )
+                    select(ReceiptItem).where(ReceiptItem.receipt_id == receipt_id)
                 ).all()
             )
             == 1
         )
-    assert receipt_queue.scheduled_job_registry.count == 0
+    assert pipeline.calls == 2
 
 
-@pytest.mark.parametrize("error", [ValueError("invalid"), NotImplementedError()])
-def test_permanent_error_never_retries(receipt_id, pipeline, error):
-    pipeline.error = error
-    job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
+def test_permanent_failure_does_not_retry(receipt_id, pipeline):
+    pipeline.error = ValueError("provider detail")
+    assert advance_due_receipt()
     run_queue()
-    job.refresh()
-    assert job.get_status() == JobStatus.FAILED
-    assert job.retries_left == 0
-    assert pipeline.calls == 1
-    assert receipt_queue.scheduled_job_registry.count == 0
+    assert not advance_due_receipt()
+    with SessionLocal() as session:
+        receipt = session.get(Receipt, receipt_id)
+        assert receipt.processing_status == ProcessingStatus.FAILED
+        assert receipt.automatic_ocr_retries == 0
+        assert "provider detail" not in receipt.processing_error_message
 
 
-def test_empty_intervals_disable_retries(receipt_id, pipeline, monkeypatch):
-    monkeypatch.setattr(setting, "receipt_retry_intervals_seconds", ())
-    job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
-    run_queue()
-    assert job.get_status() == JobStatus.FAILED
-    assert pipeline.calls == 1
-    assert receipt_queue.scheduled_job_registry.count == 0
+def test_manual_run_keeps_spent_automatic_budget(receipt_id, pipeline):
+    from backend.app.services.receipt_processing_service import ReceiptProcessingService
 
-
-@pytest.mark.parametrize("change", ["delete", "new_version"])
-def test_scheduled_retry_skips_obsolete_receipt(receipt_id, pipeline, change):
-    job = Job.fetch(enqueue_receipt(receipt_id), connection=queue_connection)
-    run_queue()
-    assert job.get_status() == JobStatus.SCHEDULED
     with SessionLocal.begin() as session:
         receipt = session.get(Receipt, receipt_id)
-        if change == "delete":
-            session.delete(receipt)
-        else:
-            receipt.processing_version += 1
-            receipt.status = ReceiptStatus.UPLOADED
-    release_scheduled(job)
+        owner = receipt.receipt_user_id
+        receipt.processing_status = ProcessingStatus.FAILED
+        receipt.automatic_ocr_retries = 3
+        receipt.ocr_due_at = None
+
+    ReceiptProcessingService(SessionLocal).prepare_process(receipt_id, owner, False)
+    assert advance_due_receipt()
     run_queue()
-    assert job.get_status() == JobStatus.FINISHED
-    assert pipeline.calls == 1
-    assert receipt_queue.scheduled_job_registry.count == 0
-    if change == "new_version":
-        with SessionLocal() as session:
-            assert session.get(Receipt, receipt_id).status == ReceiptStatus.UPLOADED
-
-
-@pytest.mark.parametrize(
-    "state, expected",
-    [
-        (ReceiptStatus.UPLOADED, True),
-        (ReceiptStatus.FAILED, True),
-        (ReceiptStatus.PREPROCESSING, False),
-        (ReceiptStatus.OCR_PROCESSING, False),
-        (ReceiptStatus.PARSING, False),
-        (ReceiptStatus.NEED_REVIEW, False),
-        (ReceiptStatus.COMPLETED, False),
-    ],
-)
-def test_retry_eligibility_by_status(receipt_id, state, expected):
-    with SessionLocal.begin() as session:
-        session.get(Receipt, receipt_id).status = state
-    assert (
-        ReceiptProcessingService(SessionLocal).can_retry_processing(receipt_id, 1)
-        is expected
-    )
-
-
-@pytest.mark.parametrize("change", ["delete", "new_version", "saved_result"])
-def test_retry_eligibility_rejects_obsolete_work(receipt_id, change):
-    with SessionLocal.begin() as session:
+    assert not advance_due_receipt()
+    with SessionLocal() as session:
         receipt = session.get(Receipt, receipt_id)
-        if change == "delete":
-            session.delete(receipt)
-        elif change == "new_version":
-            receipt.processing_version += 1
-        else:
-            receipt.processing_result_saved_at = datetime.now(UTC)
-    assert not ReceiptProcessingService(SessionLocal).can_retry_processing(
-        receipt_id, 1
-    )
+        assert receipt.processing_status == ProcessingStatus.FAILED
+        assert receipt.manual_ocr_runs == 1
+        assert receipt.automatic_ocr_retries == 3

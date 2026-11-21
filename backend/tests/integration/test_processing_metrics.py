@@ -11,7 +11,7 @@ from redis.exceptions import RedisError
 from backend.app.core.config import metrics_settings, setting
 from backend.app.db.session import SessionLocal
 from backend.app.models import Receipt, User
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.repositories.processing_metrics_repository import (
     ProcessingMetricsRepository,
 )
@@ -26,6 +26,7 @@ from backend.app.services.receipt_pipeline import ReceiptPipeline
 from backend.app.services.receipt_processing_service import ReceiptProcessingService
 from backend.app.workers import jobs, retry_policy
 from backend.app.workers.queue import queue_connection
+from backend.app.workers.receipt_dispatcher import advance_due_receipt
 
 pytestmark = pytest.mark.integration
 
@@ -39,7 +40,11 @@ def metrics_receipt():
             user_mail=f"{uuid4()}@example.com",
             user_password_hash="test",
         )
-        receipt = Receipt(user=user, image_object_key="metrics/test.jpg")
+        receipt = Receipt(
+            user=user,
+            image_object_key="metrics/test.jpg",
+            processing_status=ProcessingStatus.QUEUED,
+        )
         session.add(receipt)
         session.flush()
         return receipt.receipt_id
@@ -143,7 +148,12 @@ def test_retry_counts_attempts_instead_of_unique_receipts(metrics_receipt, monke
     monkeypatch.setattr(jobs, "get_receipt_pipeline", lambda: pipeline)
     with pytest.raises(TimeoutError):
         jobs.process_receipt(str(metrics_receipt))
-    jobs.process_receipt(str(metrics_receipt))
+    with SessionLocal.begin() as session:
+        receipt = session.get(Receipt, metrics_receipt)
+        version = receipt.processing_version
+        receipt.ocr_due_at = datetime.now(UTC)
+    assert advance_due_receipt()
+    jobs.process_receipt(str(metrics_receipt), version)
     for stage in (ProcessingStage.PIPELINE, ProcessingStage.OCR):
         data = snapshot()[stage]
         assert data.attempts == 2
@@ -179,13 +189,15 @@ def test_metrics_write_failure_does_not_fail_receipt(metrics_receipt, monkeypatc
     jobs.process_receipt(str(metrics_receipt))
     with SessionLocal() as session:
         receipt = session.get(Receipt, metrics_receipt)
-        assert receipt.status == ReceiptStatus.NEED_REVIEW
+        assert receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
         assert receipt.processing_error_code is None
 
 
 def test_parent_reports_interruption_once_without_unknown_duration(metrics_receipt):
     with SessionLocal.begin() as session:
-        session.get(Receipt, metrics_receipt).status = ReceiptStatus.OCR_PROCESSING
+        session.get(
+            Receipt, metrics_receipt
+        ).processing_status = ProcessingStatus.OCR_PROCESSING
     job = Mock(
         id=str(uuid4()),
         args=(str(metrics_receipt), 1),

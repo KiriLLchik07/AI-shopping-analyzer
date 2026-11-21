@@ -4,10 +4,11 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from pydantic import ValidationError
+
 from backend.app.core.config import ParsingSettings
 from backend.app.parsing.receipt_parser import ReceiptParser
 from backend.app.services.receipt_pipeline import UnconfiguredReceiptPipeline
-from pydantic import ValidationError
 
 
 @pytest.mark.parametrize(
