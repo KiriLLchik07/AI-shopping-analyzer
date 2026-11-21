@@ -7,20 +7,24 @@ export type Page<T> = {
   total: number
   total_pages: number
 }
-export type ReceiptStatus =
-  | 'uploaded'
+export type ReceiptReviewStatus = 'draft' | 'needs_review' | 'confirmed'
+export type ProcessingStatus =
+  | 'pending_dispatch'
+  | 'queued'
   | 'preprocessing'
   | 'ocr_processing'
   | 'parsing'
-  | 'need_review'
-  | 'completed'
+  | 'retry_scheduled'
+  | 'succeeded'
   | 'failed'
 export type Receipt = {
   receipt_id: string
   store_name: string | null
   purchase_datetime: string | null
   total_amount: Money | null
-  status: ReceiptStatus
+  receipt_status: ReceiptReviewStatus
+  processing_status: ProcessingStatus
+  manual_ocr_attempts_remaining: number
   created_at: string
   confirmed_at: string | null
   processing_error_message: string | null

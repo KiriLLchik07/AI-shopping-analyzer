@@ -1,15 +1,23 @@
+import type { ProcessingStatus, ReceiptReviewStatus } from '../api/types'
+
 export const TIMEZONE = 'Asia/Omsk'
-export const statusLabels = {
-  uploaded: 'В очереди',
+export const receiptStatusLabels: Record<ReceiptReviewStatus, string> = {
+  draft: 'Черновик',
+  needs_review: 'Нужна проверка',
+  confirmed: 'Подтверждён',
+}
+export const processingStatusLabels: Record<ProcessingStatus, string> = {
+  pending_dispatch: 'Ожидает отправки',
+  queued: 'В очереди',
   preprocessing: 'Подготовка фото',
   ocr_processing: 'Распознавание',
   parsing: 'Разбор товаров',
-  need_review: 'Нужна проверка',
-  completed: 'Подтверждён',
+  retry_scheduled: 'Ожидает автоматического повтора',
+  succeeded: 'Обработка завершена',
   failed: 'Ошибка обработки',
-} as const
-export const isProcessing = (status: string) =>
-  ['uploaded', 'preprocessing', 'ocr_processing', 'parsing'].includes(status)
+}
+export const isProcessing = (status: ProcessingStatus) =>
+  status !== 'succeeded' && status !== 'failed'
 export const money = (value: string | number | null | undefined) =>
   value == null
     ? 'Нет суммы'

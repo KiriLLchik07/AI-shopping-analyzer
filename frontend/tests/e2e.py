@@ -33,7 +33,9 @@ def receipt_fixture():
         "store_name": "Продукты у дома",
         "purchase_datetime": "2026-10-21T09:45:00Z",
         "total_amount": "200.00",
-        "status": "need_review",
+        "receipt_status": "needs_review",
+        "processing_status": "succeeded",
+        "manual_ocr_attempts_remaining": 3,
         "created_at": "2026-10-21T10:00:00Z",
         "confirmed_at": None,
         "processing_error_message": None,
@@ -74,7 +76,7 @@ class Api:
         self.empty = False
         self.fail_session = False
         self.fail_report = False
-        self.enqueue_unconfirmed = False
+        self.dispatch_paused = False
         self.expired = False
         self.processing = 0
         self.calls = []
@@ -151,25 +153,21 @@ class Api:
             )
         elif path == "/api/receipts/upload":
             assert "multipart/form-data; boundary=" in req.headers["content-type"]
-            if self.enqueue_unconfirmed:
-                reply(
-                    {
-                        "detail": {
-                            "code": "receipt_enqueue_unconfirmed",
-                            "message": "Чек сохранён, но очередь временно недоступна. Не загружайте фото повторно.",
-                            "receipt_id": "receipt-one",
-                        }
-                    },
-                    503,
-                )
-            else:
-                self.processing = 1
-                self.receipt["status"] = "uploaded"
-                reply(self.receipt, 201)
+            self.processing = 0 if self.dispatch_paused else 1
+            self.receipt.update(
+                receipt_status="draft",
+                processing_status="pending_dispatch",
+                manual_ocr_attempts_remaining=3,
+                confirmed_at=None,
+            )
+            reply(self.receipt, 201)
         elif path == "/api/receipts":
             query = parse_qs(parsed.query)
             items = [] if self.empty else [self.receipt]
-            if query.get("status") and self.receipt["status"] != query["status"][0]:
+            if (
+                query.get("receipt_status")
+                and self.receipt["receipt_status"] != query["receipt_status"][0]
+            ):
                 items = []
             reply(
                 {
@@ -188,12 +186,22 @@ class Api:
                 }
             )
         elif path == "/api/receipts/receipt-one/confirm":
-            self.receipt.update(status="completed", confirmed_at="2026-10-21T10:30:00Z")
+            self.receipt.update(
+                receipt_status="confirmed", confirmed_at="2026-10-21T10:30:00Z"
+            )
+            reply(self.receipt)
+        elif path == "/api/receipts/receipt-one/review":
+            self.receipt["receipt_status"] = "needs_review"
             reply(self.receipt)
         elif path == "/api/receipts/receipt-one/reprocess":
             assert body == {"replace_items": True}
             self.processing = 1
-            self.receipt.update(status="uploaded", confirmed_at=None)
+            self.receipt.update(
+                receipt_status="draft",
+                processing_status="pending_dispatch",
+                confirmed_at=None,
+            )
+            self.receipt["manual_ocr_attempts_remaining"] -= 1
             reply(
                 {
                     "receipt_id": "receipt-one",
@@ -222,18 +230,23 @@ class Api:
             else:
                 item.update(body)
                 reply(item)
-            self.receipt.update(status="need_review", confirmed_at=None)
+            if self.receipt["receipt_status"] == "confirmed":
+                self.receipt.update(receipt_status="needs_review", confirmed_at=None)
         elif path == "/api/receipts/receipt-one":
             if method == "PATCH":
                 assert isinstance(body.get("total_amount", "0"), str)
                 self.receipt.update(body)
-                self.receipt.update(status="need_review", confirmed_at=None)
+                if self.receipt["receipt_status"] == "confirmed":
+                    self.receipt.update(
+                        receipt_status="needs_review", confirmed_at=None
+                    )
             if self.processing:
-                states = ["preprocessing", "ocr_processing", "parsing", "need_review"]
-                self.receipt["status"] = states[min(self.processing - 1, 3)]
+                states = ["preprocessing", "ocr_processing", "parsing", "succeeded"]
+                self.receipt["processing_status"] = states[min(self.processing - 1, 3)]
                 self.processing += 1
                 if self.processing > 4:
                     self.processing = 0
+                    self.receipt["receipt_status"] = "needs_review"
             reply(self.receipt)
         elif path == "/api/analytics/summary":
             reply(
@@ -526,17 +539,20 @@ def run(base_url):
             page.wait_for_function(
                 "document.querySelector('.local-preview img').naturalWidth > 0"
             )
-            api.enqueue_unconfirmed = True
+            api.dispatch_paused = True
             page.get_by_role("button", name="Распознать чек", exact=True).click()
+            # The mock reuses the same ID as the previously reviewed receipt.
+            expect(page).to_have_url(base_url + "/receipts/receipt-one")
+            page.reload()
             expect(
-                page.get_by_role("link", name="Перейти к сохранённому чеку")
+                page.get_by_role("heading", name="Ожидает отправки", exact=True)
             ).to_be_visible()
             expect(
                 page.get_by_role("button", name="Распознать чек", exact=True)
             ).to_have_count(0)
             page.get_by_role("link", name="Чеки", exact=True).click()
             expect(page.locator(".receipt-row")).to_have_count(1)
-            page.get_by_label("Статус", exact=True).select_option("failed")
+            page.get_by_label("Статус", exact=True).select_option("confirmed")
             expect(page.get_by_role("heading", name="Чеки не найдены")).to_be_visible()
             page.get_by_role("button", name="Сбросить фильтры").click()
             expect(page.locator(".receipt-row")).to_have_count(1)
@@ -609,6 +625,11 @@ def run(base_url):
         expect(
             page.get_by_role("button", name="Подтвердить чек", exact=True)
         ).to_be_visible(timeout=20_000)
+        expect(
+            page.get_by_role("button", name="Распознать повторно", exact=True)
+        ).to_have_count(0)
+        api.receipt.update(receipt_status="draft", processing_status="failed")
+        page.reload()
         page.get_by_role("button", name="Распознать повторно", exact=True).click()
         expect(page.get_by_role("alertdialog")).to_be_visible()
         assert not any(call[1].endswith("/reprocess") for call in api.calls)
@@ -620,6 +641,24 @@ def run(base_url):
             "button", name="Повторить распознавание"
         ).click()
         expect(page.locator(".processing-panel")).to_be_visible()
+        api.processing = 0
+        api.receipt.update(
+            receipt_status="draft",
+            processing_status="failed",
+            manual_ocr_attempts_remaining=0,
+        )
+        page.reload()
+        expect(
+            page.get_by_text("Ручные попытки исчерпаны.", exact=False)
+        ).to_be_visible()
+        expect(
+            page.get_by_role("button", name="Распознать повторно", exact=True)
+        ).to_have_count(0)
+        page.get_by_role("button", name="Перейти к ручной проверке").click()
+        page.get_by_role("button", name="Подтвердить чек", exact=True).click()
+        expect(
+            page.get_by_role("button", name="Чек подтверждён", exact=True)
+        ).to_be_visible()
         api.expired = True
         page.get_by_role("link", name="Отчёты", exact=True).click()
         expect(page.get_by_role("heading", name="С возвращением")).to_be_visible()

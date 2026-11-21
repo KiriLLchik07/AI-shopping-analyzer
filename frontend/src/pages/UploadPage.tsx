@@ -3,7 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@radix-ui/themes'
 import { UploadSimpleIcon, ImageIcon, ArrowLeftIcon, XIcon } from '@phosphor-icons/react'
-import { ApiError, apiRequest } from '../api/client'
+import { apiRequest } from '../api/client'
 import type { Receipt } from '../api/types'
 import { ErrorNotice } from '../components/Feedback'
 
@@ -35,12 +35,6 @@ export function UploadPage() {
       void client.invalidateQueries({ queryKey: ['receipts'] })
     },
   })
-  const savedId =
-    upload.error instanceof ApiError &&
-    upload.error.code === 'receipt_enqueue_unconfirmed' &&
-    typeof upload.error.details?.receipt_id === 'string'
-      ? upload.error.details.receipt_id
-      : null
   function selectFile(next: File | undefined) {
     if (upload.isPending) return
     upload.reset()
@@ -138,26 +132,20 @@ export function UploadPage() {
             <ErrorNotice error="Не удалось открыть изображение. Выберите другой файл." />
           )}
           {upload.isError && <ErrorNotice error={upload.error} />}
-          {savedId ? (
-            <Button asChild size="3">
-              <Link to={`/receipts/${savedId}`}>Перейти к сохранённому чеку</Link>
-            </Button>
-          ) : (
-            <Button
-              size="3"
-              className="upload-submit"
-              disabled={!file || imageFailed}
-              loading={upload.isPending}
-              onClick={() =>
-                upload.mutate(undefined, {
-                  onSuccess: (receipt) =>
-                    navigate(`/receipts/${receipt.receipt_id}`, { replace: true }),
-                })
-              }
-            >
-              Распознать чек
-            </Button>
-          )}
+          <Button
+            size="3"
+            className="upload-submit"
+            disabled={!file || imageFailed}
+            loading={upload.isPending}
+            onClick={() =>
+              upload.mutate(undefined, {
+                onSuccess: (receipt) =>
+                  navigate(`/receipts/${receipt.receipt_id}`, { replace: true }),
+              })
+            }
+          >
+            Распознать чек
+          </Button>
           {upload.isPending && (
             <p role="status" className="muted">
               Сохраняем фотографию. Не загружайте её повторно.
