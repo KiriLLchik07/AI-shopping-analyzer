@@ -1,16 +1,23 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from uuid import UUID
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from backend.app.core.config import setting
 from backend.app.core.exceptions import (
     ConflictError,
     ReceiptNotFoundError,
     ReceiptProcessingConflictError,
 )
+from backend.app.core.logging import get_correlation_id, normalize_correlation_id
 from backend.app.core.receipt_processing_errors import get_safe_processing_error
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import (
+    RUNNING_PROCESSING_STATUSES,
+    ProcessingStatus,
+    ReceiptReviewStatus,
+)
+from backend.app.models.receipt import Receipt
 from backend.app.repositories.receipt_processing_repository import (
     ReceiptProcessingRepository,
 )
@@ -24,6 +31,30 @@ from backend.app.schemas.processing import (
 from backend.app.services.receipt_categorization_service import (
     ReceiptCategorizationService,
 )
+
+PROCESSING_TIMEOUT_SECONDS = 300
+RECOVERY_GRACE_SECONDS = 60
+
+
+def record_processing_failure(
+    receipt: Receipt, error: BaseException | None, *, retryable: bool
+) -> None:
+    safe_error = get_safe_processing_error(
+        error if isinstance(error, Exception) else None
+    )
+    receipt.processing_error_code = safe_error.code
+    receipt.processing_error_message = safe_error.message
+
+    delays = setting.receipt_retry_intervals_seconds
+    used = receipt.automatic_ocr_retries
+    if retryable and used < len(delays):
+        receipt.automatic_ocr_retries += 1
+        receipt.processing_version += 1
+        receipt.processing_status = ProcessingStatus.RETRY_SCHEDULED
+        receipt.ocr_due_at = datetime.now(UTC) + timedelta(seconds=delays[used])
+    else:
+        receipt.processing_status = ProcessingStatus.FAILED
+        receipt.ocr_due_at = None
 
 
 class SaveProcessingOutcome(StrEnum):
@@ -47,12 +78,17 @@ class ReceiptProcessingService:
             if receipt is None:
                 raise ReceiptNotFoundError
 
-            if receipt.status not in {
-                ReceiptStatus.FAILED,
-                ReceiptStatus.NEED_REVIEW,
-                ReceiptStatus.COMPLETED,
-            }:
-                raise ConflictError("Чек уже ожидает обработки или обрабатывается.")
+            if (
+                receipt.receipt_status != ReceiptReviewStatus.DRAFT
+                or receipt.processing_status != ProcessingStatus.FAILED
+            ):
+                raise ConflictError(
+                    "Повтор доступен только после окончательного сбоя обработки."
+                )
+            if receipt.manual_ocr_attempts_remaining == 0:
+                raise ConflictError(
+                    "Все ручные попытки использованы. Заполните чек вручную."
+                )
 
             if repository.has_items(receipt_id=receipt_id) and not replace_items:
                 raise ConflictError(
@@ -60,6 +96,9 @@ class ReceiptProcessingService:
                 )
 
             repository.prepare_process(receipt=receipt, replace_items=replace_items)
+            receipt.manual_ocr_runs += 1
+            receipt.ocr_due_at = datetime.now(UTC)
+            receipt.ocr_correlation_id = normalize_correlation_id(get_correlation_id())
 
             ticket = ReceiptProcessTicket(
                 receipt_id=receipt.receipt_id,
@@ -67,32 +106,6 @@ class ReceiptProcessingService:
             )
 
         return ticket
-
-    def mark_enqueue_unconfirmed(
-        self, receipt_id: UUID, processing_version: int
-    ) -> None:
-        with self.session_factory.begin() as session:
-            repository = ReceiptProcessingRepository(session)
-            receipt = repository.get_for_update(receipt_id)
-
-            if receipt is None:
-                return
-
-            if receipt.processing_version != processing_version:
-                return
-
-            if receipt.status != ReceiptStatus.UPLOADED:
-                return
-
-            if receipt.processing_result_saved_at is not None:
-                return
-
-            repository.set_processing_error(
-                receipt=receipt,
-                status=ReceiptStatus.FAILED,
-                error_code="receipt_enqueue_unconfirmed",
-                error_message="Не удалось подтвердить постановку чека в очередь обработки.",
-            )
 
     def start_processing(
         self, receipt_id: UUID, processing_version: int = 1
@@ -110,7 +123,11 @@ class ReceiptProcessingService:
             if receipt.processing_result_saved_at is not None:
                 return
 
-            if receipt.status not in {ReceiptStatus.UPLOADED, ReceiptStatus.FAILED}:
+            if receipt.processing_status not in {
+                ProcessingStatus.PENDING_DISPATCH,
+                ProcessingStatus.QUEUED,
+                ProcessingStatus.RETRY_SCHEDULED,
+            }:
                 return
 
             source = ReceiptProcessingInput(
@@ -119,10 +136,14 @@ class ReceiptProcessingService:
 
             repository.set_status(
                 receipt,
-                ReceiptStatus.PREPROCESSING,
+                ProcessingStatus.PREPROCESSING,
                 clear_error=True,
                 clear_orientation_report=True,
                 clear_ocr_result=True,
+            )
+
+            receipt.ocr_due_at = datetime.now(UTC) + timedelta(
+                seconds=PROCESSING_TIMEOUT_SECONDS + RECOVERY_GRACE_SECONDS
             )
 
         return source
@@ -130,15 +151,15 @@ class ReceiptProcessingService:
     def advance_status(
         self,
         receipt_id: UUID,
-        expected_status: ReceiptStatus,
-        new_status: ReceiptStatus,
+        expected_status: ProcessingStatus,
+        new_status: ProcessingStatus,
         processing_version: int = 1,
         orientation_report: OrientationReport | None = None,
     ) -> bool:
 
         allowed_transitions = {
-            (ReceiptStatus.PREPROCESSING, ReceiptStatus.OCR_PROCESSING),
-            (ReceiptStatus.OCR_PROCESSING, ReceiptStatus.PARSING),
+            (ProcessingStatus.PREPROCESSING, ProcessingStatus.OCR_PROCESSING),
+            (ProcessingStatus.OCR_PROCESSING, ProcessingStatus.PARSING),
         }
 
         if (expected_status, new_status) not in allowed_transitions:
@@ -149,7 +170,7 @@ class ReceiptProcessingService:
 
         if (
             orientation_report is not None
-            and expected_status != ReceiptStatus.PREPROCESSING
+            and expected_status != ProcessingStatus.PREPROCESSING
         ):
             raise ValueError("Orientation report can only be saved after preprocessing")
 
@@ -166,7 +187,7 @@ class ReceiptProcessingService:
             if receipt.processing_result_saved_at is not None:
                 return False
 
-            if receipt.status != expected_status:
+            if receipt.processing_status != expected_status:
                 return False
 
             repository.set_status(
@@ -190,7 +211,7 @@ class ReceiptProcessingService:
                 return False
             if receipt.processing_result_saved_at is not None:
                 return False
-            if receipt.status != ReceiptStatus.OCR_PROCESSING:
+            if receipt.processing_status != ProcessingStatus.OCR_PROCESSING:
                 return False
             repository.store_ocr_result(receipt, result)
         return True
@@ -198,39 +219,22 @@ class ReceiptProcessingService:
     def mark_failed(
         self,
         receipt_id: UUID,
-        error: Exception | None = None,
+        error: BaseException | None = None,
         processing_version: int = 1,
+        *,
+        retryable: bool = False,
     ) -> bool:
-        safe_error = get_safe_processing_error(error)
-
         with self.session_factory.begin() as session:
-            repository = ReceiptProcessingRepository(session)
-            receipt = repository.get_for_update(receipt_id)
-
-            if receipt is None:
+            receipt = ReceiptProcessingRepository(session).get_for_update(receipt_id)
+            if (
+                receipt is None
+                or receipt.processing_version != processing_version
+                or receipt.processing_status not in RUNNING_PROCESSING_STATUSES
+            ):
                 return False
 
-            if receipt.processing_version != processing_version:
-                return False
-
-            if receipt.processing_result_saved_at is not None:
-                return False
-
-            if receipt.status not in {
-                ReceiptStatus.PREPROCESSING,
-                ReceiptStatus.OCR_PROCESSING,
-                ReceiptStatus.PARSING,
-            }:
-                return False
-
-            repository.set_processing_error(
-                receipt,
-                status=ReceiptStatus.FAILED,
-                error_code=safe_error.code,
-                error_message=safe_error.message,
-            )
-
-        return True
+            record_processing_failure(receipt, error, retryable=retryable)
+            return True
 
     def save_result(
         self,
@@ -252,6 +256,9 @@ class ReceiptProcessingService:
             if receipt.processing_result_saved_at is not None:
                 return SaveProcessingOutcome.ALREADY_SAVED
 
+            if receipt.processing_status != ProcessingStatus.PARSING:
+                return SaveProcessingOutcome.STALE_JOB
+
             if receipt.items_revision != receipt.processing_items_revision:
                 raise ReceiptProcessingConflictError()
 
@@ -267,55 +274,6 @@ class ReceiptProcessingService:
                 raw_ocr_text=result.raw_ocr_text,
                 parsed_receipt=result.parsed_receipt,
                 saved_at=datetime.now(UTC),
-                status=ReceiptStatus.NEED_REVIEW,
             )
 
         return SaveProcessingOutcome.SAVED
-
-    def mark_interrupted(self, receipt_id: UUID, processing_version: int) -> bool:
-        with self.session_factory.begin() as session:
-            repository = ReceiptProcessingRepository(session)
-            receipt = repository.get_for_update(receipt_id)
-
-            if receipt is None:
-                return False
-            if receipt.processing_version != processing_version:
-                return False
-            if receipt.processing_result_saved_at is not None:
-                return False
-            if receipt.status not in {
-                ReceiptStatus.UPLOADED,
-                ReceiptStatus.PREPROCESSING,
-                ReceiptStatus.OCR_PROCESSING,
-                ReceiptStatus.PARSING,
-            }:
-                return False
-
-            repository.set_processing_error(
-                receipt=receipt,
-                status=ReceiptStatus.FAILED,
-                error_code="processing_interrupted",
-                error_message=(
-                    "Обработка чека была прервана. "
-                    "Если автоматический повтор недоступен, "
-                    "запустите обработку повторно."
-                ),
-            )
-
-        return True
-
-    def can_retry_processing(self, receipt_id: UUID, processing_version: int) -> bool:
-        with self.session_factory.begin() as session:
-            repository = ReceiptProcessingRepository(session)
-            receipt = repository.get_for_update(receipt_id)
-
-            if receipt is None:
-                return False
-
-            if receipt.processing_result_saved_at is not None:
-                return False
-
-            if receipt.processing_version != processing_version:
-                return False
-
-            return receipt.status in {ReceiptStatus.UPLOADED, ReceiptStatus.FAILED}

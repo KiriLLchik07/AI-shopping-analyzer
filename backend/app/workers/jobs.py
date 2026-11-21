@@ -9,7 +9,7 @@ from backend.app.core.logging import (
     normalize_correlation_id,
 )
 from backend.app.db.session import SessionLocal
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus
 from backend.app.schemas.processing_metrics import MetricOutcome, ProcessingStage
 from backend.app.services.processing_metrics_service import processing_metrics
 from backend.app.services.receipt_pipeline import get_receipt_pipeline
@@ -18,6 +18,7 @@ from backend.app.services.receipt_processing_service import (
     SaveProcessingOutcome,
 )
 from backend.app.workers.log_context import get_job_log_context
+from backend.app.workers.retry_policy import is_retryable_error
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +83,8 @@ def _process_receipt(
         ) as orientation:
             advanced = service.advance_status(
                 receipt_id=parsed_receipt_id,
-                expected_status=ReceiptStatus.PREPROCESSING,
-                new_status=ReceiptStatus.OCR_PROCESSING,
+                expected_status=ProcessingStatus.PREPROCESSING,
+                new_status=ProcessingStatus.OCR_PROCESSING,
                 processing_version=processing_version,
                 orientation_report=preprocessed.orientation_report,
             )
@@ -137,14 +138,13 @@ def _process_receipt(
 
     except Exception as error:
         logger.exception("Receipt processing failed")
-
         try:
             service.mark_failed(
                 parsed_receipt_id,
-                error=error,
-                processing_version=processing_version,
+                error,
+                processing_version,
+                retryable=is_retryable_error(error),
             )
         except Exception:
             logger.exception("Could not persist receipt processing error")
-
         raise

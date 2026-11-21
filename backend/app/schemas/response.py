@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ProcessingStatus, ReceiptReviewStatus
 from backend.app.schemas.orientation import OrientationReport
 from backend.app.schemas.parsing import ReceiptParsingReport
 
@@ -57,7 +57,9 @@ class ReceiptResponse(BaseModel):
     ocr_confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     orientation_report: OrientationReport | None = None
     parsing_report: ReceiptParsingReport | None = None
-    status: ReceiptStatus
+    receipt_status: ReceiptReviewStatus
+    processing_status: ProcessingStatus
+    manual_ocr_attempts_remaining: int
     confirmed_at: datetime | None = None
     processing_error_code: str | None = None
     processing_error_message: str | None = None

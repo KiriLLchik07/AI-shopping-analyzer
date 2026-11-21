@@ -12,7 +12,7 @@ from pydantic import (
     model_validator,
 )
 
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ReceiptReviewStatus
 from backend.app.schemas.items import ItemAmount, ItemQuantity
 from backend.app.schemas.validation import (
     LoginPassword,
@@ -46,7 +46,7 @@ class ReceiptListParams(BaseModel):
     date_from: date | None = None
     date_to: date | None = None
     store_name: str | None = Field(default=None, min_length=1, max_length=100)
-    status: ReceiptStatus | None = None
+    receipt_status: ReceiptReviewStatus | None = None
 
     @model_validator(mode="after")
     def validate_date_range(self) -> Self:

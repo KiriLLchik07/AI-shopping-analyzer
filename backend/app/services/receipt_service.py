@@ -16,7 +16,10 @@ from backend.app.core.exceptions import (
     ReceiptItemNotFoundError,
     ReceiptNotFoundError,
 )
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import (
+    ProcessingStatus,
+    ReceiptReviewStatus,
+)
 from backend.app.models.object_cleanup_task import ObjectCleanupTask
 from backend.app.models.receipt import Receipt, ReceiptItem
 from backend.app.repositories.category_repository import CategoryRepository
@@ -70,7 +73,7 @@ class ReceiptService:
             "date_from": date_from,
             "date_to": date_to,
             "store_name": params.store_name,
-            "status": params.status,
+            "receipt_status": params.receipt_status,
         }
 
         receipts = self.repository.get_receipts(
@@ -108,11 +111,37 @@ class ReceiptService:
 
         return receipt
 
+    def review_receipt_manually(self, receipt_id: UUID, user_id: UUID) -> Receipt:
+        receipt = self.get_receipt_by_id(receipt_id, user_id, for_update=True)
+        if (
+            receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
+            and receipt.processing_status == ProcessingStatus.FAILED
+        ):
+            return receipt
+        if (
+            receipt.receipt_status != ReceiptReviewStatus.DRAFT
+            or receipt.processing_status != ProcessingStatus.FAILED
+        ):
+            raise ConflictError("Ручная проверка доступна после сбоя обработки.")
+
+        receipt.receipt_status = ReceiptReviewStatus.NEEDS_REVIEW
+        self.db_session.commit()
+        self.db_session.refresh(receipt)
+        return receipt
+
     def confirm_receipt(self, receipt_id: UUID, user_id: UUID) -> Receipt:
         receipt = self.get_receipt_by_id(receipt_id, user_id, for_update=True)
-        if receipt.status not in {ReceiptStatus.NEED_REVIEW, ReceiptStatus.COMPLETED}:
+        if receipt.receipt_status not in {
+            ReceiptReviewStatus.NEEDS_REVIEW,
+            ReceiptReviewStatus.CONFIRMED,
+        }:
             raise ConflictError("Only a receipt awaiting review can be confirmed")
-        if receipt.status == ReceiptStatus.NEED_REVIEW or receipt.confirmed_at is None:
+        if (
+            receipt.receipt_status == ReceiptReviewStatus.NEEDS_REVIEW
+            or receipt.confirmed_at is None
+        ):
+            if receipt.purchase_datetime is None:
+                raise BusinessRuleError("Укажите дату покупки перед подтверждением.")
             try:
                 items = [
                     ReceiptItemData.model_validate(item)

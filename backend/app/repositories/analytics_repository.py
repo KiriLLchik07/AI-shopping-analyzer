@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import INTERVAL
 from sqlalchemy.orm import Session
 
 from backend.app.models import Category, Receipt, ReceiptItem
-from backend.app.models.enums import ReceiptStatus
+from backend.app.models.enums import ReceiptReviewStatus
 from backend.app.schemas.analytics import (
     MonthComparisonPeriods,
     ProductSort,
@@ -25,7 +25,7 @@ class AnalyticsRepository:
     def _confirmed_filters(user_id: UUID):
         return (
             Receipt.receipt_user_id == user_id,
-            Receipt.status == ReceiptStatus.COMPLETED,
+            Receipt.receipt_status == ReceiptReviewStatus.CONFIRMED,
             Receipt.confirmed_at.is_not(None),
         )
 
